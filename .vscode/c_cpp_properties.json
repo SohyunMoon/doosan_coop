@@ -1,0 +1,25 @@
+{
+    "configurations": [
+        {
+            "browse": {
+                "databaseFilename": "${default}",
+                "limitSymbolsToIncludedHeaders": false
+            },
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/home/oem/catkin_ws/devel/include/**",
+                "/opt/ros/noetic/include/**",
+                "/usr/include/**"
+                //"/home/oem/catkin_ws/src/Real/dsr_control/include/**",
+                //"/home/oem/catkin_ws/src/Real/common/include/**",
+                //"/home/oem/catkin_ws/src/Real/dsr_control/control/include/**",
+            ],
+            "name": "ROS",
+            "intelliSenseMode": "linux-gcc-x64",
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c17",
+            "cppStandard": "gnu++14"
+        }
+    ],
+    "version": 4
+}
