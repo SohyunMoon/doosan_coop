@@ -1,1 +1,4 @@
-skku_control/skku_tools/libtorch/
+build/
+devel/
+logs/
+.catkin_workspace
