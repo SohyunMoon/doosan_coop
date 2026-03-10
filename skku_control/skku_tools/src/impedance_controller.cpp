@@ -404,7 +404,7 @@ namespace SKKU
 
             // Static
             // torque.tau_d[i] = trq_stat[i];
-
+asdsdasdasdas
 
             // torque saturation 
             if (torque.tau_d[i] > torque_limits[i]) {
