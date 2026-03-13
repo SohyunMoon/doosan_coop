@@ -253,9 +253,13 @@ namespace SKKU
         Eigen::Map<Eigen::Matrix<float, 6, 1>> xdot(robot_state->actual_flange_velocity);
         Eigen::Map<Eigen::Matrix<float, 6, 1>> q(robot_state->actual_joint_position);
         Eigen::Map<Eigen::Matrix<float, 6, 1>> qdot(robot_state->actual_joint_velocity);
+        // Eigen::Map<Eigen::Matrix<float, 7, 1>> x0(trajectory.pos_d.data());
+        // Eigen::Map<Eigen::Matrix<float, 6, 1>> x0Dot(trajectory.vel_d.data());
+        // Eigen::Map<Eigen::Matrix<float, 6, 1>> x02Dot(trajectory.acc_d.data());
+
         Eigen::Map<Eigen::Matrix<float, 7, 1>> x0(trajectory.pos_d.data());
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> x0Dot(trajectory.vel_d.data());
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> x02Dot(trajectory.acc_d.data());
+        Eigen::Map<Eigen::Matrix<float, 7, 1>> x0Dot(trajectory.vel_d.data());
+        Eigen::Map<Eigen::Matrix<float, 7, 1>> x02Dot(trajectory.acc_d.data());
 
         memcpy(joint, robot_state->actual_joint_position, sizeof(float) * 6);
         memcpy(joint_velocity, robot_state->actual_joint_velocity, sizeof(float) * 6);
@@ -444,9 +448,15 @@ namespace SKKU
         Eigen::Map<Eigen::Matrix<float, 6, 1>> trq_ext(robot_state->external_joint_torque);
         Eigen::Map<const Eigen::Matrix<float, 6, 1>> trq_g(robot_state->gravity_torque);
         Eigen::Map<Eigen::Matrix<float, 6, 1>> F_extPrev(prev.F_extPrev.data());
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> pos(trajectory.pos_d.data());
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> vel(trajectory.vel_d.data());
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> acc(trajectory.acc_d.data());
+        // Eigen::Map<Eigen::Matrix<float, 6, 1>> pos(trajectory.pos_d.data());
+        // Eigen::Map<Eigen::Matrix<float, 6, 1>> vel(trajectory.vel_d.data());
+        // Eigen::Map<Eigen::Matrix<float, 6, 1>> acc(trajectory.acc_d.data());
+
+        // ✅ 물리적 크기인 7차원으로 우선 매핑
+        Eigen::Map<Eigen::Matrix<float, 7, 1>> pos(trajectory.pos_d.data());
+        Eigen::Map<Eigen::Matrix<float, 7, 1>> vel(trajectory.vel_d.data());
+        Eigen::Map<Eigen::Matrix<float, 7, 1>> acc(trajectory.acc_d.data());
+
         Eigen::Matrix<float, 6, 6> JPrev;
         float qd_sing[NUMBER_OF_JOINT] = {0,};
         Eigen::Matrix<float, 6, 1> v = 0.05 * (x - xPrev) / dt + 0.95 * vPrev;
@@ -542,13 +552,23 @@ namespace SKKU
         
         Eigen::Matrix<float, 6, 1> imp_C = Eigen::Matrix<float, 6, 1>::Zero();
 
-        imp_C = M_inv * (M * acc + B * vel + K * pos + F_ext); // considering external force
-        // imp_C = M_inv * (M * acc + B * vel + K * pos); // Not considering external force 
+        // imp_C = M_inv * (M * acc + B * vel + K * pos + F_ext); // considering external force
+        // // imp_C = M_inv * (M * acc + B * vel + K * pos); // Not considering external force 
+
+        // rungeKutta(t_start, imp.pos_m, imp.vel_m, imp_C);
+
+        // imp.acc_m = M_inv * (-1 * B * imp.vel_m - K * imp.pos_m) + imp_C;
+        // F_imp = M * (acc - imp.acc_m) + B * (vel - imp.vel_m) + K * (pos - imp.pos_m);
+
+        // ✅ .head(6)을 사용해 앞의 6칸(X,Y,Z,Roll,Pitch,Yaw)만 추출하여 연산
+        imp_C = M_inv * (M * acc.head(6) + B * vel.head(6) + K * pos.head(6) + F_ext); 
 
         rungeKutta(t_start, imp.pos_m, imp.vel_m, imp_C);
 
         imp.acc_m = M_inv * (-1 * B * imp.vel_m - K * imp.pos_m) + imp_C;
-        F_imp = M * (acc - imp.acc_m) + B * (vel - imp.vel_m) + K * (pos - imp.pos_m);
+        
+        // ✅ 여기도 .head(6) 적용
+        F_imp = M * (acc.head(6) - imp.acc_m) + B * (vel.head(6) - imp.vel_m) + K * (pos.head(6) - imp.pos_m);
 
         for (int i = 0; i < 6; i++)
         {

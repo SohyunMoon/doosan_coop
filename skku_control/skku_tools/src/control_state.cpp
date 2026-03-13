@@ -59,9 +59,16 @@ namespace SKKU {
         std::copy(errors_int.begin(), errors_int.end(), e_integral.begin());
     }
 
-    Trajectory::Trajectory(const std::array<float, 6>& pos, const std::array<float, 6>& vel, const std::array<float, 6>& acc) noexcept
-        : pos_d(pos), vel_d(vel), acc_d(acc) {}
-    
+    // Trajectory::Trajectory(const std::array<float, 6>& pos, const std::array<float, 6>& vel, const std::array<float, 6>& acc) noexcept
+    //     : pos_d(pos), vel_d(vel), acc_d(acc) {}
+
+    Trajectory::Trajectory(const std::array<float, 7>& pos, const std::array<float, 7>& vel, const std::array<float, 7>& acc) noexcept
+    {
+        pos_d = pos;
+        vel_d = vel;
+        acc_d = acc;
+    }
+        
     Trajectory::Trajectory(std::initializer_list<float> pos, std::initializer_list<float> vel, std::initializer_list<float> acc) {
         if (pos.size() != pos_d.size()) {
             throw std::invalid_argument("Invalid number of elements in position trajectory.");

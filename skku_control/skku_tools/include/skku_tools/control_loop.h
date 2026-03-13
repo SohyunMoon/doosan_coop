@@ -82,10 +82,16 @@ class TrajectoryGen{
         void TrajectoryGenerator(PlanParam* plan, TraParam* tra);
         void init(moveit_msgs::CartesianTrajectory msg, moveit_msgs::CartesianTrajectory prev_msg,float current_position[NUMBER_OF_JOINT],int operator_call_count_);
 
-        std::vector<std::array<double, 6>> quadraticInterpolation(const std::vector<std::array<double, 6>>& points, int newPointsNum);
-        std::vector<std::array<double, 6>> upsampleTrajectory(const moveit_msgs::CartesianTrajectory& msg, int newPointsNum);
+        // std::vector<std::array<double, 6>> quadraticInterpolation(const std::vector<std::array<double, 6>>& points, int newPointsNum);
+        // std::vector<std::array<double, 6>> upsampleTrajectory(const moveit_msgs::CartesianTrajectory& msg, int newPointsNum);
 
-        std::vector<std::array<double, 6>> CurvePoints_;
+        // std::vector<std::array<double, 6>> CurvePoints_;
+
+        // [수정 후] -> 7차원 궤적(쿼터니언)을 담을 수 있도록 전부 7로 변경!
+        std::vector<std::array<double, 7>> quadraticInterpolation(const std::vector<std::array<double, 7>>& points, int newPointsNum);
+        std::vector<std::array<double, 7>> upsampleTrajectory(const moveit_msgs::CartesianTrajectory& msg, int newPointsNum);
+
+        std::vector<std::array<double, 7>> CurvePoints_;
 
         DRAFramework::CDRFLEx Drfl_;
 
@@ -131,6 +137,7 @@ class ControlLoop : protected PBIC{
         void resetToInitialPosition();
         void StateCheckingThread(ControlLoop* controlLoop);
         void convertToArray(const std::array<float, 6>& stdArray, float floatArray[6]);
+        void convertToArray(const std::array<float, 7>& stdArray, float floatArray[7]); // <-- 이 줄 추가!
         void logData(const std::string& fileName, const float* data, int dataSize); 
         void logMatrixData(const std::string& fileName, const float matrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT], int rows, int cols);
         void logMatrixData3x3(const std::string& fileName, const float matrix[3][3], int rows, int cols);

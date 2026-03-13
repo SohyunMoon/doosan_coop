@@ -47,14 +47,25 @@ public:
     std::array<float, 6> e_integral = {0.0};
 };
 
+// class Trajectory {
+// public:
+//     Trajectory() {};
+//     Trajectory(const std::array<float, 6>& pos, const std::array<float, 6>& vel, const std::array<float, 6>& acc) noexcept;
+//     Trajectory(std::initializer_list<float> pos, std::initializer_list<float> vel, std::initializer_list<float> acc);
+//     std::array<float, 6> pos_d = {0.0};
+//     std::array<float, 6> vel_d = {0.0};
+//     std::array<float, 6> acc_d = {0.0};
+// };
+
+// [수정 후] -> 전부 7로 변경!
 class Trajectory {
 public:
     Trajectory() {};
-    Trajectory(const std::array<float, 6>& pos, const std::array<float, 6>& vel, const std::array<float, 6>& acc) noexcept;
+    Trajectory(const std::array<float, 7>& pos, const std::array<float, 7>& vel, const std::array<float, 7>& acc) noexcept;
     Trajectory(std::initializer_list<float> pos, std::initializer_list<float> vel, std::initializer_list<float> acc);
-    std::array<float, 6> pos_d = {0.0};
-    std::array<float, 6> vel_d = {0.0};
-    std::array<float, 6> acc_d = {0.0};
+    std::array<float, 7> pos_d = {0.0};
+    std::array<float, 7> vel_d = {0.0};
+    std::array<float, 7> acc_d = {0.0};
 };
 
 class Total_trajectory {
