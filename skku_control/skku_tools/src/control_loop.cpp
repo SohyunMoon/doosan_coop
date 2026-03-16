@@ -301,7 +301,7 @@
 //     int extraPointsNum = 1000;  
 //     std::vector<std::array<double, 7>> acceleration_segment, decceleration_segment;
 
-//     // [추가] 6차원 current_position을 안전하게 7차원(쿼터니언)으로 변환
+    
 //     float current_pos_7d[7];
 //     for (int k = 0; k < 3; ++k) current_pos_7d[k] = current_position[k];
 //     Eigen::AngleAxisf rollAngle(current_position[3] * M_PI / 180.0f, Eigen::Vector3f::UnitX());
@@ -558,46 +558,63 @@
 //     std::cout << "Impedance Goal-directed Mode called" << std::endl;
 //     fail = 0;
 //     control_mode_ = "Impedance goal mode";
-//     operator_call_count_++; 
-
-//     LPRT_OUTPUT_DATA_LIST robot_data = Drfl_.read_data_rt(); // reading real time data 
-
-//     float current_joint[NUMBER_OF_JOINT] = {0, };
-//     memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-//     memcpy(current_position,robot_data->actual_flange_position,NUMBER_OF_JOINT*sizeof(float));
-
-//     Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE); // mode setting for control 
-//     Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
-
-//     float x_offset[NUMBER_OF_JOINT] = {0, };
-
-
+//     operator_call_count_++;
 //     sol_space = 0;
-//     count = 0; 
+//     count = 0;
 
-//     /////////////////////////////////////////////////////////////
-//     ///////////////External force offset detection///////////////
-//     /////////////////////////////////////////////////////////////
-//     //Check Fext Calculation
-//     // std::thread gainsavingThread([this]() { gaindataSavingThread(); });
-//     // GainMove();
-//     // gainsavingThread.join();
-//     // return;
-//     /////////////////////////////////////////////////////////////
+//     // LPRT_OUTPUT_DATA_LIST robot_data = Drfl_.read_data_rt(); // reading real time data 
+
+//     // float current_joint[NUMBER_OF_JOINT] = {0, };
+//     // memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
+//     // memcpy(current_position,robot_data->actual_flange_position,NUMBER_OF_JOINT*sizeof(float));
+
+//     // Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE); // mode setting for control 
+//     // Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
+
+//     // float x_offset[NUMBER_OF_JOINT] = {0, };
+
+
+//     // /////////////////////////////////////////////////////////////
+//     // ///////////////External force offset detection///////////////
+//     // /////////////////////////////////////////////////////////////
+//     // //Check Fext Calculation
+//     // // std::thread gainsavingThread([this]() { gaindataSavingThread(); });
+//     // // GainMove();
+//     // // gainsavingThread.join();
+//     // // return;
+//     // /////////////////////////////////////////////////////////////
     
-//     // std::cout << "INITIAL actual position for joint 6: " << current_joint[5] << std::endl;
-//     ROS_INFO_STREAM("Full message content : " << msg);
+//     // // std::cout << "INITIAL actual position for joint 6: " << current_joint[5] << std::endl;
+//     // ROS_INFO_STREAM("Full message content : " << msg);
     
 
-//     robot_data = Drfl_.read_data_rt(); // reading real time data 
-//     memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
+//     // robot_data = Drfl_.read_data_rt(); // reading real time data 
+//     // memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
 
-//     Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE); // mode setting for control 
+//     // Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE); // mode setting for control 
+//     // Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
+    
+//     // robot_data = Drfl_.read_data_rt(); // reading real time data 
+//     // memcpy(current_position,robot_data->actual_flange_position,NUMBER_OF_JOINT*sizeof(float));
+//     // memcpy(current_joint,robot_data->actual_joint_position,NUMBER_OF_JOINT*sizeof(float));
+
+//     ROS_INFO_STREAM("Full message content : " << msg);  
+
+//     // 1. 모드 세팅 (딱 1번만!)
+//     Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE); 
 //     Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
     
-//     robot_data = Drfl_.read_data_rt(); // reading real time data 
-//     memcpy(current_position,robot_data->actual_flange_position,NUMBER_OF_JOINT*sizeof(float));
-//     memcpy(current_joint,robot_data->actual_joint_position,NUMBER_OF_JOINT*sizeof(float));
+//     // (선택사항) 하드웨어 통신 안정화를 위해 10ms 정도 아주 짧게 대기해주면 좋습니다.
+//     std::this_thread::sleep_for(std::chrono::milliseconds(10)); 
+
+//     // 2. 센서 데이터 읽기 (딱 1번만 읽어서 robot_state에 저장!)
+//     LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt(); 
+
+//     // 3. 읽어온 데이터 배열에 복사하기
+//     float current_joint[NUMBER_OF_JOINT] = {0, };
+//     memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
+//     memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
+
 
 //     trajectory_gen_.init(msg,previous_msg,current_position,operator_call_count_);
     
@@ -651,7 +668,7 @@
 //     // stopDataSaving();
 //     // saveLoopTimesToFile(dataDirectory);
     
-//     LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
+//     // LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
 
 //     start_Motion(robot_state, prev, imp);
 
@@ -700,9 +717,12 @@
 //     saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
 //     controlState = false;
 
-//     // 루프 종료 후 최신 상태 다시 읽기
-//     robot_data = Drfl_.read_data_rt();
+//     // // 루프 종료 후 최신 상태 다시 읽기
+//     // robot_data = Drfl_.read_data_rt();
 
+//     // 루프 종료 후 최신 상태 다시 읽기
+//     robot_state = Drfl_.read_data_rt(); // ✨ robot_state로 이름 변경
+    
 //     auto finished_time  = std::chrono::high_resolution_clock::now();
 //     auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(finished_time - start_time);
 //     std::cout << "elapsed time: " << elapsed_time.count() << " ms" << std::endl;
@@ -2915,35 +2935,27 @@
 // }
 
 
+
 // }
 
-
 #include <algorithm>
-#include <array>
-#include <atomic>
 #include <cerrno>
-#include <chrono>
-#include <cmath>
-#include <condition_variable>
 #include <cstring>
 #include <exception>
 #include <fstream>
-#include <future>
-#include <iomanip>
-#include <memory>
-#include <sstream>
 #include <thread>
-#include <unordered_map>
+#include <chrono>
+#include <atomic>
 #include <vector>
-
 extern bool g_nKill_dsr_control;
-
 #include <skku_tools/control_loop.h>
 #include <ros/ros.h>
 #include <std_msgs/String.h>
 #include <boost/filesystem.hpp>
-#include <geometry_msgs/Quaternion.h>
+#include <condition_variable>
 #include <../../include/skku_control/dsr_hw_interface.h>
+#include <unordered_map>
+#include <future>
 
 std::mutex mtx;
 std::condition_variable cv;
@@ -2955,11 +2967,109 @@ float current_position[NUMBER_OF_JOINT] = {0, };
 #define DESIRED_TIME 10
 
 double working_mode;
-// `using std::string_literals::operator""s` produces a GCC warning that cannot be disabled, so we
-// have to use `using namespace ...`.
-// See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=65923#c0
 using namespace std::string_literals;  // NOLINT(google-build-using-namespace)
-bool controlState = false;
+bool controlState = false; 
+
+// =========================================================================
+// Helper Functions
+// =========================================================================
+namespace {
+    constexpr float DEG2RAD = static_cast<float>(M_PI) / 180.0f;
+    constexpr float RAD2DEG = 180.0f / static_cast<float>(M_PI);
+
+    inline Eigen::Quaternionf normalizeQuat(Eigen::Quaternionf q) {
+        if (q.norm() < 1e-6f) {
+            return Eigen::Quaternionf::Identity();
+        }
+        q.normalize();
+        return q;
+    }
+
+    inline bool isZeroQuatMsg(const geometry_msgs::Quaternion& q_msg) {
+        return std::abs(q_msg.x) < 1e-12 &&
+               std::abs(q_msg.y) < 1e-12 &&
+               std::abs(q_msg.z) < 1e-12 &&
+               std::abs(q_msg.w) < 1e-12;
+    }
+
+    inline float unwrapNear(float angle_deg, float ref_deg) {
+        while (angle_deg - ref_deg > 180.0f) angle_deg -= 360.0f;
+        while (angle_deg - ref_deg < -180.0f) angle_deg += 360.0f;
+        return angle_deg;
+    }
+
+    inline Eigen::Quaternionf quatFromEulerDeg(float roll_deg, float pitch_deg, float yaw_deg) {
+        Eigen::AngleAxisf rollAngle (roll_deg  * DEG2RAD, Eigen::Vector3f::UnitX());
+        Eigen::AngleAxisf pitchAngle(pitch_deg * DEG2RAD, Eigen::Vector3f::UnitY());
+        Eigen::AngleAxisf yawAngle  (yaw_deg   * DEG2RAD, Eigen::Vector3f::UnitZ());
+
+        Eigen::Quaternionf q = yawAngle * pitchAngle * rollAngle;
+        return normalizeQuat(q);
+    }
+
+    inline Eigen::Quaternionf quatFromMsg(const geometry_msgs::Quaternion& q_msg) {
+        return normalizeQuat(Eigen::Quaternionf(q_msg.w, q_msg.x, q_msg.y, q_msg.z));
+    }
+
+    inline Eigen::Quaternionf quatFromPose7(const std::array<float, 7>& pose7) {
+        return normalizeQuat(Eigen::Quaternionf(pose7[6], pose7[3], pose7[4], pose7[5]));
+    }
+
+    inline void alignQuatHemisphere(Eigen::Quaternionf& q, const Eigen::Quaternionf& ref) {
+        if (q.coeffs().dot(ref.coeffs()) < 0.0f) {
+            q.coeffs() *= -1.0f;
+        }
+    }
+
+    inline std::array<float, 3> quatToEulerDegZYX(const Eigen::Quaternionf& q_in) {
+        Eigen::Quaternionf q = normalizeQuat(q_in);
+        Eigen::Vector3f euler_zyx = q.toRotationMatrix().eulerAngles(2, 1, 0);
+
+        float roll_deg  = euler_zyx[2] * RAD2DEG;
+        float pitch_deg = euler_zyx[1] * RAD2DEG;
+        float yaw_deg   = euler_zyx[0] * RAD2DEG;
+
+        return {roll_deg, pitch_deg, yaw_deg};
+    }
+
+    inline std::array<float, 3> quatToEulerDegZYXNear(
+        const Eigen::Quaternionf& q_in,
+        float ref_roll_deg,
+        float ref_pitch_deg,
+        float ref_yaw_deg) {
+
+        auto rpy = quatToEulerDegZYX(q_in);
+        rpy[0] = unwrapNear(rpy[0], ref_roll_deg);
+        rpy[1] = unwrapNear(rpy[1], ref_pitch_deg);
+        rpy[2] = unwrapNear(rpy[2], ref_yaw_deg);
+        return rpy;
+    }
+
+    inline void writeQuatXYZW(const Eigen::Quaternionf& q_in, float* dst_xyzw) {
+        Eigen::Quaternionf q = normalizeQuat(q_in);
+        dst_xyzw[0] = q.x();
+        dst_xyzw[1] = q.y();
+        dst_xyzw[2] = q.z();
+        dst_xyzw[3] = q.w();
+    }
+
+    inline double quatMsgToYawDeg(const geometry_msgs::Quaternion& q_msg) {
+        return static_cast<double>(quatToEulerDegZYX(quatFromMsg(q_msg))[2]);
+    }
+
+    inline void printPose6(const std::string& tag, const float* p) {
+        std::cout << tag
+                << " [x y z r p y] = "
+                << p[0] << ", " << p[1] << ", " << p[2] << ", "
+                << p[3] << ", " << p[4] << ", " << p[5] << std::endl;
+    }
+
+    inline void printQuat4(const std::string& tag, float x, float y, float z, float w) {
+        std::cout << tag
+                << " [x y z w] = "
+                << x << ", " << y << ", " << z << ", " << w << std::endl;
+    }
+} // end of anonymous namespace
 
 namespace SKKU {
 
@@ -2972,121 +3082,59 @@ int fail;
 TrajectoryGen trajectory_gen_;
 TrajectoryGen::PlanParam plan;
 TrajectoryGen::TraParam tra;
-float distance_threshold = 50;
+float distance_threshold = 50; 
 std::vector<uint64_t> loopTimes;
 
 namespace {
-constexpr float RAD2DEG = 180.0f / static_cast<float>(M_PI);
-constexpr float DEG2RAD = static_cast<float>(M_PI) / 180.0f;
+    void fillEulerDummyForIK(const SKKU::Trajectory& src_quat, SKKU::Trajectory& dst_euler) {
+        dst_euler = src_quat;
 
-float unwrapNear(float angle_deg, float ref_deg) {
-    while (angle_deg - ref_deg > 180.0f) angle_deg -= 360.0f;
-    while (angle_deg - ref_deg < -180.0f) angle_deg += 360.0f;
-    return angle_deg;
-}
+        static bool first = true;
+        static float prev_rpy[3] = {0.f, 0.f, 0.f};
 
-void normalizeQuatPoint(std::array<double, 7>& p) {
-    double n = std::sqrt(p[3] * p[3] + p[4] * p[4] + p[5] * p[5] + p[6] * p[6]);
-    if (n > 1e-9) {
-        p[3] /= n;
-        p[4] /= n;
-        p[5] /= n;
-        p[6] /= n;
-    } else {
-        p[3] = 0.0;
-        p[4] = 0.0;
-        p[5] = 0.0;
-        p[6] = 1.0;
-    }
-}
+        Eigen::Quaternionf q = quatFromPose7(src_quat.pos_d);
 
-void alignQuatSign(std::array<double, 7>& curr, const std::array<double, 7>& prev) {
-    double dot = curr[3] * prev[3] + curr[4] * prev[4] + curr[5] * prev[5] + curr[6] * prev[6];
-    if (dot < 0.0) {
-        for (int k = 3; k < 7; ++k) {
-            curr[k] *= -1.0;
+        std::array<float, 3> rpy;
+        if (first) {
+            rpy = quatToEulerDegZYX(q);
+            first = false;
+        } else {
+            rpy = quatToEulerDegZYXNear(q, prev_rpy[0], prev_rpy[1], prev_rpy[2]);
         }
+
+        float roll  = rpy[0];
+        float pitch = rpy[1];
+        float yaw   = rpy[2];
+
+        prev_rpy[0] = roll;
+        prev_rpy[1] = pitch;
+        prev_rpy[2] = yaw;
+
+        dst_euler.pos_d[3] = roll;
+        dst_euler.pos_d[4] = pitch;
+        dst_euler.pos_d[5] = yaw;
+
+        dst_euler.vel_d[3] = 0.0f;
+        dst_euler.vel_d[4] = 0.0f;
+        dst_euler.vel_d[5] = 0.0f;
+
+        dst_euler.acc_d[3] = 0.0f;
+        dst_euler.acc_d[4] = 0.0f;
+        dst_euler.acc_d[5] = 0.0f;
     }
 }
 
-Eigen::Quaternionf quatFromPose7(const std::array<float, 7>& pose7) {
-    Eigen::Quaternionf q(pose7[6], pose7[3], pose7[4], pose7[5]);  // w,x,y,z
-    if (q.norm() < 1e-6f) return Eigen::Quaternionf::Identity();
-    q.normalize();
-    return q;
-}
-
-float quatMsgToYawDeg(const geometry_msgs::Quaternion& qmsg) {
-    Eigen::Quaternionf q(qmsg.w, qmsg.x, qmsg.y, qmsg.z);
-    if (q.norm() < 1e-6f) return 0.0f;
-    q.normalize();
-    Eigen::Vector3f euler = q.toRotationMatrix().eulerAngles(2, 1, 0);
-    return euler[0] * RAD2DEG;
-}
-
-void fillEulerDummyForIK(const Trajectory& src_quat,
-                         Trajectory& dst_euler,
-                         bool reset,
-                         const float ref_rpy[3]) {
-    dst_euler = src_quat;
-
-    static bool initialized = false;
-    static float prev_rpy[3] = {0.f, 0.f, 0.f};
-
-    if (reset || !initialized) {
-        prev_rpy[0] = ref_rpy[0];
-        prev_rpy[1] = ref_rpy[1];
-        prev_rpy[2] = ref_rpy[2];
-        initialized = true;
-    }
-
-    Eigen::Quaternionf q = quatFromPose7(src_quat.pos_d);
-    Eigen::Vector3f euler_zyx = q.toRotationMatrix().eulerAngles(2, 1, 0);
-
-    float roll = unwrapNear(euler_zyx[2] * RAD2DEG, prev_rpy[0]);
-    float pitch = unwrapNear(euler_zyx[1] * RAD2DEG, prev_rpy[1]);
-    float yaw = unwrapNear(euler_zyx[0] * RAD2DEG, prev_rpy[2]);
-
-    prev_rpy[0] = roll;
-    prev_rpy[1] = pitch;
-    prev_rpy[2] = yaw;
-
-    dst_euler.pos_d[3] = roll;
-    dst_euler.pos_d[4] = pitch;
-    dst_euler.pos_d[5] = yaw;
-
-    dst_euler.vel_d[3] = 0.0f;
-    dst_euler.vel_d[4] = 0.0f;
-    dst_euler.vel_d[5] = 0.0f;
-    dst_euler.acc_d[3] = 0.0f;
-    dst_euler.acc_d[4] = 0.0f;
-    dst_euler.acc_d[5] = 0.0f;
-}
-}  // namespace
-
-void TrajectoryGen::init(moveit_msgs::CartesianTrajectory msg,
-                         moveit_msgs::CartesianTrajectory prev_msg,
-                         float current_position[NUMBER_OF_JOINT],
-                         int operator_call_count_) {
-    (void)prev_msg;
-    (void)operator_call_count_;
-
-    float start_point[7];
+void TrajectoryGen::init(moveit_msgs::CartesianTrajectory msg, moveit_msgs::CartesianTrajectory prev_msg, float current_position[NUMBER_OF_JOINT], int operator_call_count_) {
+    float start_point[7]; 
     float goal[7];
-    float tra_time = 0.0f;
+    float tra_time = 0.0;
 
     for (int i = 0; i < 3; i++) start_point[i] = current_position[i];
 
-    Eigen::AngleAxisf rollAngle(current_position[3] * DEG2RAD, Eigen::Vector3f::UnitX());
-    Eigen::AngleAxisf pitchAngle(current_position[4] * DEG2RAD, Eigen::Vector3f::UnitY());
-    Eigen::AngleAxisf yawAngle(current_position[5] * DEG2RAD, Eigen::Vector3f::UnitZ());
-    Eigen::Quaternionf q_start = yawAngle * pitchAngle * rollAngle;
-    q_start.normalize();
+    Eigen::Quaternionf q_start =
+        quatFromEulerDeg(current_position[3], current_position[4], current_position[5]);
 
-    start_point[3] = q_start.x();
-    start_point[4] = q_start.y();
-    start_point[5] = q_start.z();
-    start_point[6] = q_start.w();
+    writeQuatXYZW(q_start, &start_point[3]);
 
     goal[0] = msg.points[0].point.pose.position.x;
     goal[1] = msg.points[0].point.pose.position.y;
@@ -3094,14 +3142,11 @@ void TrajectoryGen::init(moveit_msgs::CartesianTrajectory msg,
     goal[3] = msg.points[0].point.pose.orientation.x;
     goal[4] = msg.points[0].point.pose.orientation.y;
     goal[5] = msg.points[0].point.pose.orientation.z;
-    goal[6] = msg.points[0].point.pose.orientation.w;
+    goal[6] = msg.points[0].point.pose.orientation.w; 
 
-    float dot = start_point[3] * goal[3] +
-                start_point[4] * goal[4] +
-                start_point[5] * goal[5] +
-                start_point[6] * goal[6];
+    float dot = start_point[3]*goal[3] + start_point[4]*goal[4] + start_point[5]*goal[5] + start_point[6]*goal[6];
     if (dot < 0.0f) {
-        for (int i = 3; i < 7; i++) start_point[i] *= -1.0f;
+        for(int i = 3; i < 7; i++) start_point[i] *= -1.0f;
     }
 
     tra_time = msg.points[0].time_from_start.toSec();
@@ -3110,44 +3155,37 @@ void TrajectoryGen::init(moveit_msgs::CartesianTrajectory msg,
     for (int i = 0; i < 7; i++) {
         plan.ps[i] = start_point[i];
         plan.pf[i] = goal[i];
-        plan.vs[i] = 0.0f;
-        plan.vf[i] = 0.0f;
-        plan.as[i] = 0.0f;
-        plan.af[i] = 0.0f;
+        plan.vs[i] = 0.0f; plan.vf[i] = 0.0f; 
+        plan.as[i] = 0.0f; plan.af[i] = 0.0f;
     }
 
     trajectory_gen_.TrajectoryPlan(&plan);
     std::cout << "Full Quaternion Pipeline Initialized." << std::endl;
 }
 
-std::vector<std::array<double, 7>> TrajectoryGen::quadraticInterpolation(
-    const std::vector<std::array<double, 7>>& points, int newPointsNum) {
-    int originalPointsNum = static_cast<int>(points.size());
+std::vector<std::array<double, 7>> TrajectoryGen::quadraticInterpolation(const std::vector<std::array<double, 7>>& points, int newPointsNum) {
+    std::vector<std::array<double, 7>> interpolatedPoints;
+    int originalPointsNum = points.size();
+
     if (originalPointsNum < 4) {
-        return points;
+        throw std::invalid_argument("Not enough points for cubic interpolation.");
     }
 
-    std::vector<std::array<double, 7>> interpolatedPoints;
-    int totalSegments = originalPointsNum - 1;
-    int pointsPerSegment = std::max(0, newPointsNum / totalSegments);
+    int totalSegments = originalPointsNum - 1; 
+    int pointsPerSegment = newPointsNum / totalSegments;
 
-    auto interpolate = [](const std::array<double, 7>& p0,
-                          const std::array<double, 7>& p1,
-                          const std::array<double, 7>& p2,
-                          const std::array<double, 7>& p3,
-                          double t) {
+    auto interpolate = [](const std::array<double, 7>& p0, const std::array<double, 7>& p1, const std::array<double, 7>& p2, const std::array<double, 7>& p3, double t) {
         std::array<double, 7> interpolatedPoint;
         double t2 = t * t;
         double t3 = t2 * t;
-
-        for (int k = 0; k < 7; ++k) {
-            interpolatedPoint[k] = 0.5 * ((2 * p1[k]) +
-                                          (-p0[k] + p2[k]) * t +
-                                          (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2 +
-                                          (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t3);
+        for (int k = 0; k < 7; ++k) { 
+            interpolatedPoint[k] = 0.5 * (
+                (2 * p1[k]) +
+                (-p0[k] + p2[k]) * t +
+                (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2 +
+                (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t3
+            );
         }
-
-        normalizeQuatPoint(interpolatedPoint);
         return interpolatedPoint;
     };
 
@@ -3158,19 +3196,14 @@ std::vector<std::array<double, 7>> TrajectoryGen::quadraticInterpolation(
             interpolatedPoints.push_back(interpolate(points[i - 1], points[i], points[i + 1], points[i + 2], t));
         }
     }
-
     interpolatedPoints.push_back(points.back());
     return interpolatedPoints;
 }
 
-std::vector<std::array<double, 7>> TrajectoryGen::upsampleTrajectory(
-    const moveit_msgs::CartesianTrajectory& msg, int newPointsNum) {
-    int originalPointsNum = static_cast<int>(msg.points.size());
-    if (originalPointsNum == 0) {
-        return {};
-    }
-
+std::vector<std::array<double, 7>> TrajectoryGen::upsampleTrajectory(const moveit_msgs::CartesianTrajectory& msg, int newPointsNum) {
+    int originalPointsNum = msg.points.size();
     std::vector<std::array<double, 7>> controlPoints(originalPointsNum);
+
     for (int i = 0; i < originalPointsNum; ++i) {
         controlPoints[i] = {
             msg.points[i].point.pose.position.x,
@@ -3179,94 +3212,128 @@ std::vector<std::array<double, 7>> TrajectoryGen::upsampleTrajectory(
             msg.points[i].point.pose.orientation.x,
             msg.points[i].point.pose.orientation.y,
             msg.points[i].point.pose.orientation.z,
-            msg.points[i].point.pose.orientation.w};
-        normalizeQuatPoint(controlPoints[i]);
+            msg.points[i].point.pose.orientation.w  
+        };
     }
 
-    for (int i = 1; i < originalPointsNum; ++i) {
-        alignQuatSign(controlPoints[i], controlPoints[i - 1]);
-    }
+    std::vector<std::array<double, 7>> interpolatedPoints = quadraticInterpolation(controlPoints, newPointsNum);
+    
+    auto easeInOutWeight = [](double t) -> double {
+        return t * t * (3 - 2 * t);  
+    };
 
-    std::vector<std::array<double, 7>> interpolatedPoints =
-        quadraticInterpolation(controlPoints, std::max(newPointsNum, originalPointsNum));
-
-    if (interpolatedPoints.empty()) {
-        return controlPoints;
-    }
+    int extraPointsNum = 1000;  
+    std::vector<std::array<double, 7>> acceleration_segment, decceleration_segment;
 
     float current_pos_7d[7];
     for (int k = 0; k < 3; ++k) current_pos_7d[k] = current_position[k];
+        Eigen::Quaternionf q_curr =
+            quatFromEulerDeg(current_position[3], current_position[4], current_position[5]);
 
-    Eigen::AngleAxisf rollAngle(current_position[3] * DEG2RAD, Eigen::Vector3f::UnitX());
-    Eigen::AngleAxisf pitchAngle(current_position[4] * DEG2RAD, Eigen::Vector3f::UnitY());
-    Eigen::AngleAxisf yawAngle(current_position[5] * DEG2RAD, Eigen::Vector3f::UnitZ());
-    Eigen::Quaternionf q_curr = yawAngle * pitchAngle * rollAngle;
-    q_curr.normalize();
-
-    current_pos_7d[3] = q_curr.x();
-    current_pos_7d[4] = q_curr.y();
-    current_pos_7d[5] = q_curr.z();
-    current_pos_7d[6] = q_curr.w();
-
-    std::array<double, 7> current_pos_7d_arr = {
-        current_pos_7d[0], current_pos_7d[1], current_pos_7d[2],
-        current_pos_7d[3], current_pos_7d[4], current_pos_7d[5], current_pos_7d[6]
-    };
-    alignQuatSign(interpolatedPoints[0], current_pos_7d_arr);
-
-    auto easeInOutWeight = [](double t) { return t * t * (3 - 2 * t); };
-
-    int extraPointsNum = 1000;
-    std::vector<std::array<double, 7>> acceleration_segment, decceleration_segment;
+        writeQuatXYZW(q_curr, &current_pos_7d[3]);
 
     for (int i = 0; i < extraPointsNum; ++i) {
         std::array<double, 7> interpolated_point;
-        double t = static_cast<double>(i) / (extraPointsNum - 1);
+        double t = static_cast<double>(i) / (extraPointsNum - 1);  
         double weight = easeInOutWeight(t);
 
-        for (int j = 0; j < 7; ++j) {
-            interpolated_point[j] =
-                current_pos_7d[j] * (1.0 - weight) + interpolatedPoints[0][j] * weight;
+        for (int j = 0; j < 7; ++j) { 
+            interpolated_point[j] = current_pos_7d[j] * (1.0 - weight) + interpolatedPoints[0][j] * weight;
         }
-        normalizeQuatPoint(interpolated_point);
         acceleration_segment.push_back(interpolated_point);
     }
 
-    if (interpolatedPoints.size() < 2) {
-        return interpolatedPoints;
-    }
-
-    int decelerationStartIndex = std::max(1, static_cast<int>(interpolatedPoints.size()) - 5);
-    std::array<double, 7> decel_start = interpolatedPoints[decelerationStartIndex - 1];
-    interpolatedPoints.erase(interpolatedPoints.begin() + decelerationStartIndex, interpolatedPoints.end());
+    int decelerationStartIndex = std::max(0, static_cast<int>(interpolatedPoints.size()) - 5);  
+    interpolatedPoints.erase(interpolatedPoints.begin() + decelerationStartIndex, interpolatedPoints.end());  
 
     for (int i = 0; i < extraPointsNum; ++i) {
         std::array<double, 7> interpolated_point;
-        double t = static_cast<double>(i) / (extraPointsNum - 1);
+        double t = static_cast<double>(i) / (extraPointsNum - 1);  
         double weight = easeInOutWeight(t);
 
-        for (int j = 0; j < 7; ++j) {
-            interpolated_point[j] =
-                decel_start[j] * (1.0 - weight) + controlPoints.back()[j] * weight;
+        for (int j = 0; j < 7; ++j) { 
+            interpolated_point[j] = interpolatedPoints[decelerationStartIndex - 1][j] * (1.0 - weight) + controlPoints.back()[j] * weight;
         }
-        normalizeQuatPoint(interpolated_point);
         decceleration_segment.push_back(interpolated_point);
     }
 
     std::vector<std::array<double, 7>> fullTrajectory;
     fullTrajectory.insert(fullTrajectory.end(), acceleration_segment.begin(), acceleration_segment.end());
-    fullTrajectory.insert(fullTrajectory.end(), interpolatedPoints.begin(), interpolatedPoints.end());
-    fullTrajectory.insert(fullTrajectory.end(), decceleration_segment.begin(), decceleration_segment.end());
+    fullTrajectory.insert(fullTrajectory.end(), interpolatedPoints.begin(), interpolatedPoints.end());  
+    fullTrajectory.insert(fullTrajectory.end(), decceleration_segment.begin(), decceleration_segment.end());  
 
     return fullTrajectory;
 }
 
-ControlLoop::ControlLoop(moveit_msgs::CartesianTrajectory msg,
-                         u_int64_t loop_time,
-                         RealtimeConfig realtimeconfig,
-                         DRAFramework::CDRFLEx& Drfl)
+void TrajectoryGen::TrajectoryPlan(PlanParam* plan)
+{
+    float ps[7], vs[7], as[7]; 
+    float pf[7], vf[7], af[7];
+    float tf = plan->time;
+
+    for(int i = 0; i < 7; i++)
+    {
+        ps[i] = plan->ps[i];
+        vs[i] = plan->vs[i];
+        as[i] = plan->as[i];
+        pf[i] = plan->pf[i];
+        vf[i] = plan->vf[i];
+        af[i] = plan->af[i];
+    }
+
+    for(int i = 0; i < 7; i++)
+    {
+        plan->A0[i] = ps[i];
+        plan->A1[i] = vs[i];
+        plan->A2[i] = as[i] / 2.0f;
+        plan->A3[i] = (20.0f*pf[i] - 20.0f*ps[i] - (8.0f*vf[i] + 12.0f*vs[i])*tf - (3.0f*as[i] - af[i])*tf*tf) / (2.0f*tf*tf*tf);
+        plan->A4[i] = (30.0f*ps[i] - 30.0f*pf[i] + (14.0f*vf[i] + 16.0f*vs[i])*tf + (3.0f*as[i] - 2.0f*af[i])*tf*tf) / (2.0f*tf*tf*tf*tf);
+        plan->A5[i] = (12.0f*pf[i] - 12.0f*ps[i] - (6.0f*vf[i] + 6.0f*vs[i])*tf - (as[i] - af[i])*tf*tf) / (2.0f*tf*tf*tf*tf*tf);
+    }
+}
+
+void TrajectoryGen::TrajectoryGenerator(PlanParam *plan, TraParam *tra)
+{
+    double A0[7], A1[7], A2[7], A3[7], A4[7], A5[7];
+    double t = tra->time;
+
+    if (t <= plan->time) {
+        for(int i = 0; i < 7; i++)
+        {
+            A0[i] = plan->A0[i];
+            A1[i] = plan->A1[i];
+            A2[i] = plan->A2[i];
+            A3[i] = plan->A3[i];
+            A4[i] = plan->A4[i];
+            A5[i] = plan->A5[i];
+        }
+    
+        for(int i = 0; i < 7; i++)
+        {
+            tra->pos[i] = A0[i] + A1[i]*t + A2[i]*t*t + A3[i]*t*t*t + A4[i]*t*t*t*t + A5[i]*t*t*t*t*t;
+            tra->vel[i] = A1[i] + 2.0*A2[i]*t + 3.0*A3[i]*t*t + 4.0*A4[i]*t*t*t + 5.0*A5[i]*t*t*t*t;
+            tra->acc[i] = 2.0*A2[i] + 6.0*A3[i]*t + 12.0*A4[i]*t*t + 20.0*A5[i]*t*t*t;
+        }
+
+        double quat_norm = std::sqrt(tra->pos[3]*tra->pos[3] + tra->pos[4]*tra->pos[4] + 
+                                    tra->pos[5]*tra->pos[5] + tra->pos[6]*tra->pos[6]);
+        if (quat_norm > 1e-6) {
+            for (int i = 3; i < 7; i++) {
+                tra->pos[i] /= quat_norm;
+            }
+        }
+    }
+    else {
+        for (int i = 0; i < 7; i++) {
+            tra->pos[i] = plan->pf[i];
+            tra->vel[i] = plan->vf[i];
+            tra->acc[i] = plan->af[i];
+        }
+    }
+}
+
+ControlLoop::ControlLoop(moveit_msgs::CartesianTrajectory msg, u_int64_t loop_time, RealtimeConfig realtimeconfig, DRAFramework::CDRFLEx& Drfl) 
     : PBIC(loop_time, Drfl) {
-    (void)msg;
     realtimeconfig_ = realtimeconfig;
     loop_time_ = loop_time;
     bool throw_on_error = realtimeconfig_ == RealtimeConfig::kEnforce;
@@ -3293,37 +3360,29 @@ ControlLoop::~ControlLoop() {
     }
 }
 
-ImpedanceControlLoop::ImpedanceControlLoop(moveit_msgs::CartesianTrajectory msg,
-                                           u_int64_t loop_time,
-                                           RealtimeConfig realtimeconfig,
-                                           DRAFramework::CDRFLEx& Drfl)
+ImpedanceControlLoop::ImpedanceControlLoop(moveit_msgs::CartesianTrajectory msg, u_int64_t loop_time, RealtimeConfig realtimeconfig, DRAFramework::CDRFLEx& Drfl)
     : ControlLoop(msg, loop_time, realtimeconfig, Drfl) {}
 
 ImpedanceControlLoop::~ImpedanceControlLoop() {}
 
-PositionControlLoop::PositionControlLoop(moveit_msgs::CartesianTrajectory msg,
-                                         u_int64_t loop_time,
-                                         RealtimeConfig realtimeconfig,
-                                         DRAFramework::CDRFLEx& Drfl)
+PositionControlLoop::PositionControlLoop(moveit_msgs::CartesianTrajectory msg, u_int64_t loop_time, RealtimeConfig realtimeconfig, DRAFramework::CDRFLEx& Drfl)
     : ControlLoop(msg, loop_time, realtimeconfig, Drfl) {}
 
 PositionControlLoop::~PositionControlLoop() {}
 
 void ControlLoop::StateCheckingThread(ControlLoop* controlLoop) {
-    (void)controlLoop;
     while (true) {
         ROBOT_STATE state = Drfl_.get_robot_state();
-
         if (state == STATE_SAFE_OFF || state == STATE_SAFE_STOP ||
-            state == STATE_RECOVERY || state == STATE_SAFE_STOP2 ||
+            state == STATE_RECOVERY || state == STATE_SAFE_STOP2||
             state == STATE_SAFE_OFF2 || state == STATE_EMERGENCY_STOP) {
             exitLoop = true;
-            Drfl_.set_robot_control(CONTROL_RESET_SAFET_STOP);
-        } else {
-            exitLoop = false;
+            Drfl_.set_robot_control(CONTROL_RESET_SAFET_STOP);    
         }
-
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        else {
+            exitLoop = false; 
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(1)); 
     }
 }
 
@@ -3339,17 +3398,14 @@ void PositionControlLoop::operator()(const moveit_msgs::CartesianTrajectory& msg
         return;
     }
 
-    LPRT_OUTPUT_DATA_LIST robot_data = Drfl_.read_data_rt();
+    LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
 
     float current_joint[NUMBER_OF_JOINT] = {0,};
-    memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-    memcpy(current_position, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
+    memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
+    memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
 
-    auto unwrapToNearest = [](float angle_deg, float ref_deg) {
-        while (angle_deg - ref_deg > 180.0f) angle_deg -= 360.0f;
-        while (angle_deg - ref_deg < -180.0f) angle_deg += 360.0f;
-        return angle_deg;
-    };
+    // constexpr float DEG2RAD = static_cast<float>(M_PI) / 180.0f;
+    // constexpr float RAD2DEG = 180.0f / static_cast<float>(M_PI);
 
     float goal_p[NUMBER_OF_JOINT] = {0,};
     for (int i = 0; i < 6; ++i) {
@@ -3360,41 +3416,27 @@ void PositionControlLoop::operator()(const moveit_msgs::CartesianTrajectory& msg
     goal_p[1] = msg.points[0].point.pose.position.y;
     goal_p[2] = msg.points[0].point.pose.position.z;
 
-    Eigen::AngleAxisf roll_curr(current_position[3] * DEG2RAD, Eigen::Vector3f::UnitX());
-    Eigen::AngleAxisf pitch_curr(current_position[4] * DEG2RAD, Eigen::Vector3f::UnitY());
-    Eigen::AngleAxisf yaw_curr(current_position[5] * DEG2RAD, Eigen::Vector3f::UnitZ());
-    Eigen::Quaternionf q_curr = yaw_curr * pitch_curr * roll_curr;
-    q_curr.normalize();
+    Eigen::Quaternionf q_curr =
+        quatFromEulerDeg(current_position[3], current_position[4], current_position[5]);
 
-    Eigen::Quaternionf q_goal(msg.points[0].point.pose.orientation.w,
-                              msg.points[0].point.pose.orientation.x,
-                              msg.points[0].point.pose.orientation.y,
-                              msg.points[0].point.pose.orientation.z);
+    Eigen::Quaternionf q_goal = quatFromMsg(msg.points[0].point.pose.orientation);
 
-    if (q_goal.norm() < 1e-6f) {
-        ROS_WARN("Received near-zero quaternion. Using current orientation instead.");
+    if (isZeroQuatMsg(msg.points[0].point.pose.orientation)) {
         q_goal = q_curr;
-    } else {
-        q_goal.normalize();
     }
 
-    if (q_curr.coeffs().dot(q_goal.coeffs()) < 0.0f) {
-        q_goal.coeffs() *= -1.0f;
-    }
+    alignQuatHemisphere(q_goal, q_curr);
 
-    Eigen::Vector3f euler_rad = q_goal.toRotationMatrix().eulerAngles(2, 1, 0);
+    auto goal_rpy = quatToEulerDegZYXNear(
+        q_goal,
+        current_position[3],
+        current_position[4],
+        current_position[5]
+    );
 
-    float roll_deg = euler_rad[2] * RAD2DEG;
-    float pitch_deg = euler_rad[1] * RAD2DEG;
-    float yaw_deg = euler_rad[0] * RAD2DEG;
-
-    goal_p[3] = unwrapToNearest(roll_deg, current_position[3]);
-    goal_p[4] = unwrapToNearest(pitch_deg, current_position[4]);
-    goal_p[5] = unwrapToNearest(yaw_deg, current_position[5]);
-
-    std::cout << "Goal pose XYZRPY(deg): "
-              << goal_p[0] << ", " << goal_p[1] << ", " << goal_p[2] << ", "
-              << goal_p[3] << ", " << goal_p[4] << ", " << goal_p[5] << std::endl;
+    goal_p[3] = goal_rpy[0];
+    goal_p[4] = goal_rpy[1];
+    goal_p[5] = goal_rpy[2];
 
     LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(goal_p, 2, COORDINATE_SYSTEM_BASE, 1);
     if (res == nullptr) {
@@ -3417,82 +3459,364 @@ void PositionControlLoop::operator()(const moveit_msgs::CartesianTrajectory& msg
     Drfl_.set_robot_mode(ROBOT_MODE_MANUAL);
 
     controlState = true;
-    ROS_INFO("Starting data saving...");
     startDataSaving();
 
-    ROS_INFO("Calling movej(goal_joint)...");
     bool success = Drfl_.movej(goal_joint, 60, 30, tTime);
 
-    ROS_INFO("Stopping data saving...");
     stopDataSaving();
     controlState = false;
 
     if (!success) {
-        ROS_ERROR("movej failed.");
         fail = 2;
         return;
     }
 
     float final_position[NUMBER_OF_JOINT] = {0,};
-    robot_data = Drfl_.read_data_rt();
-    memcpy(final_position, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
+    robot_state = Drfl_.read_data_rt();
+    memcpy(final_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
 
     float distance = std::sqrt(
         std::pow(final_position[0] - goal_p[0], 2) +
         std::pow(final_position[1] - goal_p[1], 2) +
-        std::pow(final_position[2] - goal_p[2], 2));
+        std::pow(final_position[2] - goal_p[2], 2)
+    );
 
-    if (distance > distance_threshold) {
-        ROS_ERROR("Failed to reach the goal position: distance = %f", distance);
-        fail = 2;
-    } else {
-        ROS_INFO("Succeeded in reaching the goal position: distance = %f", distance);
-        fail = 1;
-    }
+    if (distance > distance_threshold) fail = 2;
+    else fail = 1;
 
     previous_msg = msg;
 }
 
+void PositionControlLoop::operator_path(const moveit_msgs::CartesianTrajectory& msg) {
+    std::cout << "Position Push-path Mode called" << std::endl;
+    fail = 0;
+    control_mode_ = "Position path mode";
+    operator_call_count_++;
+
+    if (msg.points.empty()) {
+        fail = 2;
+        return;
+    }
+
+    LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
+
+    float current_joint[NUMBER_OF_JOINT] = {0,};
+    memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
+    memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
+
+    const int pointsNum = static_cast<int>(msg.points.size());
+    std::unique_ptr<float[][6]> xpos(new float[pointsNum][6]);
+
+    float spline_vel[2] = {1000, 1000};
+    float spline_acc[2] = {1000, 1000};
+    float tTime = msg.points.back().time_from_start.toSec();
+
+    // constexpr float DEG2RAD = static_cast<float>(M_PI) / 180.0f;
+    // constexpr float RAD2DEG = 180.0f / static_cast<float>(M_PI);
+
+    Eigen::Quaternionf q_prev =
+        quatFromEulerDeg(current_position[3], current_position[4], current_position[5]);
+
+    float prev_roll  = current_position[3];
+    float prev_pitch = current_position[4];
+    float prev_yaw   = current_position[5];
+
+    for (int i = 0; i < pointsNum; ++i) {
+        xpos[i][0] = msg.points[i].point.pose.position.x;
+        xpos[i][1] = msg.points[i].point.pose.position.y;
+        xpos[i][2] = msg.points[i].point.pose.position.z;
+
+        Eigen::Quaternionf q_msg = quatFromMsg(msg.points[i].point.pose.orientation);
+
+        if (isZeroQuatMsg(msg.points[i].point.pose.orientation)) {
+            q_msg = q_prev;
+        }
+
+        alignQuatHemisphere(q_msg, q_prev);
+
+        auto rpy = quatToEulerDegZYXNear(q_msg, prev_roll, prev_pitch, prev_yaw);
+
+        xpos[i][3] = rpy[0];
+        xpos[i][4] = rpy[1];
+        xpos[i][5] = rpy[2];
+
+        q_prev = q_msg;
+        prev_roll  = rpy[0];
+        prev_pitch = rpy[1];
+        prev_yaw   = rpy[2];
+    }
+
+    float delta_yaw = xpos[pointsNum - 1][5] - xpos[0][5];
+
+    if (current_joint[5] > 90.0f && delta_yaw > 0.0f) {
+        float prep_vel[2] = {70, 70};
+        float prep_acc[2] = {120, 120};
+
+        current_position[2] += 100;
+        Drfl_.movel(current_position, prep_vel, prep_acc);
+
+        robot_state = Drfl_.read_data_rt();
+        memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
+
+        current_joint[5] -= 360;
+        Drfl_.movej(current_joint, 60, 30);
+
+        robot_state = Drfl_.read_data_rt();
+        memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
+
+        current_position[2] -= 100;
+        Drfl_.movel(current_position, prep_vel, prep_acc);
+    }
+    else if (current_joint[5] < -90.0f && delta_yaw < 0.0f) {
+        float prep_vel[2] = {70, 70};
+        float prep_acc[2] = {120, 120};
+
+        current_position[2] += 100;
+        Drfl_.movel(current_position, prep_vel, prep_acc);
+
+        robot_state = Drfl_.read_data_rt();
+        memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
+
+        current_joint[5] += 360;
+        Drfl_.movej(current_joint, 60, 30);
+
+        robot_state = Drfl_.read_data_rt();
+        memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
+
+        current_position[2] -= 100;
+        Drfl_.movel(current_position, prep_vel, prep_acc);
+    }
+
+    controlState = true;
+    startDataSaving();
+
+    bool success = Drfl_.amovesx(xpos.get(), pointsNum, spline_vel, spline_acc, tTime, MOVE_MODE_ABSOLUTE);
+
+    if (!success) {
+        stopDataSaving();
+        controlState = false;
+        fail = 2;
+        return;
+    }
+
+    int wait_ret = Drfl_.mwait();
+
+    stopDataSaving();
+    controlState = false;
+
+    if (wait_ret != 1) {
+        fail = 2;
+        return;
+    }
+
+    float final_position[NUMBER_OF_JOINT] = {0,};
+    robot_state = Drfl_.read_data_rt();
+    memcpy(final_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
+
+    float distance = std::sqrt(
+        std::pow(final_position[0] - xpos[pointsNum - 1][0], 2) +
+        std::pow(final_position[1] - xpos[pointsNum - 1][1], 2) +
+        std::pow(final_position[2] - xpos[pointsNum - 1][2], 2)
+    );
+
+    if (distance > distance_threshold) fail = 2;
+    else fail = 1;
+
+    previous_msg = msg;
+}
+
+// =========================================================================
+// [추가] PositionControlLoop::operator_jpath() (조인트 경로 제어 모드)
+// =========================================================================
+void PositionControlLoop::operator_jpath(const moveit_msgs::CartesianTrajectory& msg) {
+    std::cout << "Position Joint Path Mode called" << std::endl;
+    fail = 0;
+    control_mode_ = "Position joint path mode";
+    operator_call_count_++;
+
+    if (msg.points.empty()) {
+        ROS_ERROR("operator_jpath received empty trajectory.");
+        fail = 2;
+        return;
+    }
+
+    LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
+
+    float current_joint[NUMBER_OF_JOINT] = {0, };
+    memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
+    memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
+
+    int pointsNum = msg.points.size();
+    std::unique_ptr<float[][6]> jpos(new float[pointsNum][6]);
+    float jvel = 100;
+    float jacc = 100;
+    float tTime = msg.points.back().time_from_start.toSec();
+
+    // CartesianTrajectory 메시지를 재사용하여 조인트 각도를 전달받는 로직 (원본 유지)
+    for (int i = 0; i < pointsNum; ++i) {
+        jpos[i][0] = msg.points[i].point.pose.position.x;
+        jpos[i][1] = msg.points[i].point.pose.position.y;
+        jpos[i][2] = msg.points[i].point.pose.position.z;
+        jpos[i][3] = msg.points[i].point.pose.orientation.x;
+        jpos[i][4] = msg.points[i].point.pose.orientation.y;
+        jpos[i][5] = msg.points[i].point.pose.orientation.z;
+    }
+
+    std::cout << "Calling amovesj with " << pointsNum << " points" << std::endl;
+
+    controlState = true;
+    ROS_INFO("Starting data saving...");
+    startDataSaving();
+
+    // amovesj 실행 (조인트 공간 경로 이동)
+    bool success = Drfl_.amovesj(jpos.get(), pointsNum, jvel, jacc, tTime, MOVE_MODE_ABSOLUTE);
+
+    if (!success) {
+        ROS_ERROR("amovesj failed to start.");
+        stopDataSaving();
+        controlState = false;
+        fail = 2;
+        return;
+    }
+
+    // 비동기 함수이므로 도착할 때까지 대기
+    int wait_ret = Drfl_.mwait();
+
+    ROS_INFO("Stopping data saving...");
+    stopDataSaving();
+    controlState = false;
+
+    if (wait_ret != 1) {
+        ROS_ERROR("mwait reported motion failure.");
+        fail = 2;
+        return;
+    }
+
+    fail = 1; // 성공
+    previous_msg = msg;
+}
+
+// void ImpedanceControlLoop::operator()(const moveit_msgs::CartesianTrajectory& msg) {
+//     std::cout << "Impedance Goal-directed Mode called" << std::endl;
+//     fail = 0;
+//     control_mode_ = "Impedance goal mode";
+//     operator_call_count_++;
+//     sol_space = 0;
+//     count = 0;
+
+//     Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE); 
+//     Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
+//     std::this_thread::sleep_for(std::chrono::milliseconds(10)); 
+
+//     LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt(); 
+
+//     float current_joint[NUMBER_OF_JOINT] = {0, };
+//     memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
+//     memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
+
+//     trajectory_gen_.init(msg, previous_msg, current_position, operator_call_count_);
+    
+//     Duration control_loop_time = Duration(loop_time_);
+//     float st = static_cast<float>(loop_time_) / 1000;
+
+//     start_Motion(robot_state, prev, imp);
+
+//     auto start = std::chrono::high_resolution_clock::now();
+//     loopTimes.clear();
+//     controlState = true;
+//     auto start_time = std::chrono::high_resolution_clock::now();
+//     startDataSaving();
+
+//     while (true) {
+//         robot_state = Drfl_.read_data_rt();
+
+//         if (!spinMotion(robot_state, control_loop_time, desired, sol_space) ||
+//             !spinControl(robot_state, control_loop_time, control_command, desired, sol_space)) {
+//             break;
+//         }
+
+//         if (exitLoop || g_nKill_dsr_control) {
+//             fail = 2;
+//             break;
+//         }
+
+//         Drfl_.torque_rt(control_command.tau_d, st);
+
+//         auto current = std::chrono::high_resolution_clock::now();
+//         Duration loop_time(std::chrono::duration_cast<std::chrono::milliseconds>(current - start));
+//         loopTimes.push_back(loop_time.toMSec());
+
+//         if (control_loop_time > loop_time) {
+//             std::this_thread::sleep_for(control_loop_time() - loop_time());
+//         }
+//         start = std::chrono::high_resolution_clock::now();
+//         count++;
+//     }
+
+//     stopDataSaving();
+//     saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
+//     controlState = false;
+
+//     robot_state = Drfl_.read_data_rt(); 
+    
+//     auto finished_time  = std::chrono::high_resolution_clock::now();
+//     auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(finished_time - start_time);
+//     std::cout << "elapsed time: " << elapsed_time.count() << " ms" << std::endl;
+
+//     setScheduling(originalSetting_);
+    
+//     float final_position[NUMBER_OF_JOINT] = {0, };
+//     memcpy(final_position, robot_state->actual_flange_position, NUMBER_OF_JOINT*sizeof(float)); 
+
+//     float distance = std::sqrt(
+//         std::pow(final_position[0] - msg.points[0].point.pose.position.x, 2) +
+//         std::pow(final_position[1] - msg.points[0].point.pose.position.y, 2) +
+//         std::pow(final_position[2] - msg.points[0].point.pose.position.z, 2)
+//     );
+
+//     if (distance > distance_threshold) fail = 2;
+//     else fail = 1;
+    
+//     previous_msg = msg;
+// }
+
 void ImpedanceControlLoop::operator()(const moveit_msgs::CartesianTrajectory& msg) {
-    std::cout << "Impedance Goal-directed Mode called" << std::endl;
+    std::cout << "\n======================================================\n";
+    std::cout << "[INFO] Impedance Goal-directed Mode called" << std::endl;
     fail = 0;
     control_mode_ = "Impedance goal mode";
     operator_call_count_++;
-
-    LPRT_OUTPUT_DATA_LIST robot_data = Drfl_.read_data_rt();
-
-    float current_joint[NUMBER_OF_JOINT] = {0,};
-    memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-    memcpy(current_position, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-
-    Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE);
-    Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
-
     sol_space = 0;
     count = 0;
 
-    ROS_INFO_STREAM("Full message content : " << msg);
-
-    robot_data = Drfl_.read_data_rt();
-    memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-
-    Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE);
+    Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE); 
     Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10)); 
 
-    robot_data = Drfl_.read_data_rt();
-    memcpy(current_position, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-    memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
+    LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt(); 
+
+    float current_joint[NUMBER_OF_JOINT] = {0, };
+    memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
+    memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
+
+    // ----------------------------------------------------------------------------------
+    // 🟢 [TEST POINT 1] 입력값(Input) vs 현재 상태(Current) 확인
+    // ----------------------------------------------------------------------------------
+    std::cout << "[TEST POINT 1] Initial Check\n";
+    std::cout << " - Start Pos (X,Y,Z) : " << current_position[0] << ", " << current_position[1] << ", " << current_position[2] << "\n";
+    std::cout << " - Input Goal(X,Y,Z) : " << msg.points[0].point.pose.position.x << ", " 
+                                          << msg.points[0].point.pose.position.y << ", " 
+                                          << msg.points[0].point.pose.position.z << "\n";
+    std::cout << "------------------------------------------------------\n";
 
     trajectory_gen_.init(msg, previous_msg, current_position, operator_call_count_);
-
+    
     Duration control_loop_time = Duration(loop_time_);
-    float st = static_cast<float>(loop_time_) / 1000.0f;
+    float st = static_cast<float>(loop_time_) / 1000;
 
-    LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
     start_Motion(robot_state, prev, imp);
 
     auto start = std::chrono::high_resolution_clock::now();
-
     loopTimes.clear();
     controlState = true;
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -3506,9 +3830,21 @@ void ImpedanceControlLoop::operator()(const moveit_msgs::CartesianTrajectory& ms
             break;
         }
 
+        // ----------------------------------------------------------------------------------
+        // 🟡 [TEST POINT 2] 실시간 생성 궤적(Desired) vs 실제 로봇 상태(Actual) 확인
+        // 주의: 1ms마다 출력하면 제어기가 뻗으므로 500 카운트(0.5초)마다 1번만 출력합니다.
+        // ----------------------------------------------------------------------------------
+        if (count % 500 == 0) {
+            std::cout << "[TEST POINT 2] Loop Count: " << count << " (Time: " << (count * st) << " sec)\n";
+            // desired.q_d 가 조인트 각도인지 위치인지에 따라 출력이 달라질 수 있습니다. (여기선 조인트로 가정)
+            std::cout << " - Desired (q_d 0~2): " << desired.q_d[0] << ", " << desired.q_d[1] << ", " << desired.q_d[2] << "\n";
+            std::cout << " - Actual  (Act 0~2): " << robot_state->actual_joint_position[0] << ", " 
+                                                  << robot_state->actual_joint_position[1] << ", " 
+                                                  << robot_state->actual_joint_position[2] << "\n";
+        }
+
         if (exitLoop || g_nKill_dsr_control) {
             fail = 2;
-            std::cout << SKKU::fail << std::endl;
             break;
         }
 
@@ -3521,7 +3857,6 @@ void ImpedanceControlLoop::operator()(const moveit_msgs::CartesianTrajectory& ms
         if (control_loop_time > loop_time) {
             std::this_thread::sleep_for(control_loop_time() - loop_time());
         }
-
         start = std::chrono::high_resolution_clock::now();
         count++;
     }
@@ -3530,215 +3865,43 @@ void ImpedanceControlLoop::operator()(const moveit_msgs::CartesianTrajectory& ms
     saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
     controlState = false;
 
-    robot_data = Drfl_.read_data_rt();
-
-    auto finished_time = std::chrono::high_resolution_clock::now();
-    auto elapsed_time =
-        std::chrono::duration_cast<std::chrono::milliseconds>(finished_time - start_time);
-    std::cout << "elapsed time: " << elapsed_time.count() << " ms" << std::endl;
+    robot_state = Drfl_.read_data_rt(); 
+    
+    auto finished_time  = std::chrono::high_resolution_clock::now();
+    auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(finished_time - start_time);
+    std::cout << "------------------------------------------------------\n";
+    std::cout << "[INFO] Control Loop Finished. Elapsed time: " << elapsed_time.count() << " ms" << std::endl;
 
     setScheduling(originalSetting_);
-
-    float final_position[NUMBER_OF_JOINT] = {0,};
-    memcpy(final_position, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
+    
+    float final_position[NUMBER_OF_JOINT] = {0, };
+    memcpy(final_position, robot_state->actual_flange_position, NUMBER_OF_JOINT*sizeof(float)); 
 
     float distance = std::sqrt(
         std::pow(final_position[0] - msg.points[0].point.pose.position.x, 2) +
         std::pow(final_position[1] - msg.points[0].point.pose.position.y, 2) +
-        std::pow(final_position[2] - msg.points[0].point.pose.position.z, 2));
+        std::pow(final_position[2] - msg.points[0].point.pose.position.z, 2)
+    );
 
-    if (distance > distance_threshold) {
-        ROS_ERROR("Failed to reach the goal position: distance = %f", distance);
-        fail = 2;
-    } else {
-        ROS_INFO("Succeed reach the goal position: distance = %f", distance);
-        fail = 1;
-    }
+    // ----------------------------------------------------------------------------------
+    // 🔴 [TEST POINT 3] 최종 도착 위치(Final) vs 원래 목표(Input Goal) 오차 확인
+    // ----------------------------------------------------------------------------------
+    std::cout << "[TEST POINT 3] Final Result\n";
+    std::cout << " - Final Pos (X,Y,Z) : " << final_position[0] << ", " << final_position[1] << ", " << final_position[2] << "\n";
+    std::cout << " - Input Goal(X,Y,Z) : " << msg.points[0].point.pose.position.x << ", " 
+                                          << msg.points[0].point.pose.position.y << ", " 
+                                          << msg.points[0].point.pose.position.z << "\n";
+    std::cout << " => Final Distance Error: " << distance << " mm\n";
+    std::cout << "======================================================\n\n";
 
-    previous_msg = msg;
-}
-
-void PositionControlLoop::operator_path(const moveit_msgs::CartesianTrajectory& msg) {
-    std::cout << "Position Push-path Mode called" << std::endl;
-    fail = 0;
-    control_mode_ = "Position path mode";
-    operator_call_count_++;
-
-    if (msg.points.empty()) {
-        ROS_ERROR("operator_path received empty trajectory.");
-        fail = 2;
-        return;
-    }
-
-    LPRT_OUTPUT_DATA_LIST robot_data = Drfl_.read_data_rt();
-
-    float current_joint[NUMBER_OF_JOINT] = {0,};
-    memcpy(current_position, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-    memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-
-    const int pointsNum = static_cast<int>(msg.points.size());
-
-    std::unique_ptr<float[][6]> xpos(new float[pointsNum][6]);
-
-    float spline_vel[2] = {1000, 1000};
-    float spline_acc[2] = {1000, 1000};
-    float tTime = msg.points.back().time_from_start.toSec();
-
-    auto unwrapToNearest = [](float angle_deg, float ref_deg) {
-        while (angle_deg - ref_deg > 180.0f) angle_deg -= 360.0f;
-        while (angle_deg - ref_deg < -180.0f) angle_deg += 360.0f;
-        return angle_deg;
-    };
-
-    Eigen::AngleAxisf roll0(current_position[3] * DEG2RAD, Eigen::Vector3f::UnitX());
-    Eigen::AngleAxisf pitch0(current_position[4] * DEG2RAD, Eigen::Vector3f::UnitY());
-    Eigen::AngleAxisf yaw0(current_position[5] * DEG2RAD, Eigen::Vector3f::UnitZ());
-    Eigen::Quaternionf q_prev = yaw0 * pitch0 * roll0;
-    q_prev.normalize();
-
-    float prev_roll = current_position[3];
-    float prev_pitch = current_position[4];
-    float prev_yaw = current_position[5];
-
-    for (int i = 0; i < pointsNum; ++i) {
-        xpos[i][0] = msg.points[i].point.pose.position.x;
-        xpos[i][1] = msg.points[i].point.pose.position.y;
-        xpos[i][2] = msg.points[i].point.pose.position.z;
-
-        Eigen::Quaternionf q_msg(msg.points[i].point.pose.orientation.w,
-                                 msg.points[i].point.pose.orientation.x,
-                                 msg.points[i].point.pose.orientation.y,
-                                 msg.points[i].point.pose.orientation.z);
-
-        if (q_msg.norm() < 1e-6f) {
-            ROS_WARN("Waypoint %d has near-zero quaternion. Reusing previous orientation.", i);
-            q_msg = q_prev;
-        } else {
-            q_msg.normalize();
-        }
-
-        if (q_prev.coeffs().dot(q_msg.coeffs()) < 0.0f) {
-            q_msg.coeffs() *= -1.0f;
-        }
-
-        Eigen::Vector3f euler_rad = q_msg.toRotationMatrix().eulerAngles(2, 1, 0);
-
-        float roll_deg = euler_rad[2] * RAD2DEG;
-        float pitch_deg = euler_rad[1] * RAD2DEG;
-        float yaw_deg = euler_rad[0] * RAD2DEG;
-
-        roll_deg = unwrapToNearest(roll_deg, prev_roll);
-        pitch_deg = unwrapToNearest(pitch_deg, prev_pitch);
-        yaw_deg = unwrapToNearest(yaw_deg, prev_yaw);
-
-        xpos[i][3] = roll_deg;
-        xpos[i][4] = pitch_deg;
-        xpos[i][5] = yaw_deg;
-
-        q_prev = q_msg;
-        prev_roll = roll_deg;
-        prev_pitch = pitch_deg;
-        prev_yaw = yaw_deg;
-    }
-
-    std::cout << "Point size: " << pointsNum << std::endl;
-
-    float delta_yaw = xpos[pointsNum - 1][5] - xpos[0][5];
-
-    if (current_joint[5] > 90.0f && delta_yaw > 0.0f) {
-        std::cout << "Adjusted final joint 6 position: " << current_joint[5]
-                  << " - Moving joint..." << std::endl;
-        float prep_vel[2] = {70, 70};
-        float prep_acc[2] = {120, 120};
-
-        current_position[2] += 100;
-        Drfl_.movel(current_position, prep_vel, prep_acc);
-
-        robot_data = Drfl_.read_data_rt();
-        memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-
-        current_joint[5] -= 360;
-        Drfl_.movej(current_joint, 60, 30);
-
-        robot_data = Drfl_.read_data_rt();
-        memcpy(current_position, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-
-        current_position[2] -= 100;
-        Drfl_.movel(current_position, prep_vel, prep_acc);
-    } else if (current_joint[5] < -90.0f && delta_yaw < 0.0f) {
-        std::cout << "Adjusted final joint 6 position: " << current_joint[5]
-                  << " - Moving joint..." << std::endl;
-        float prep_vel[2] = {70, 70};
-        float prep_acc[2] = {120, 120};
-
-        current_position[2] += 100;
-        Drfl_.movel(current_position, prep_vel, prep_acc);
-
-        robot_data = Drfl_.read_data_rt();
-        memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-
-        current_joint[5] += 360;
-        Drfl_.movej(current_joint, 60, 30);
-
-        robot_data = Drfl_.read_data_rt();
-        memcpy(current_position, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-
-        current_position[2] -= 100;
-        Drfl_.movel(current_position, prep_vel, prep_acc);
-    } else {
-        std::cout << "No adjustment needed for joint 6: " << current_joint[5] << std::endl;
-    }
-
-    controlState = true;
-    ROS_INFO("Starting data saving...");
-    startDataSaving();
-
-    ROS_INFO("Calling amovesx...");
-    bool success = Drfl_.amovesx(xpos.get(), pointsNum, spline_vel, spline_acc, tTime, MOVE_MODE_ABSOLUTE);
-
-    if (!success) {
-        ROS_ERROR("amovesx failed to start.");
-        stopDataSaving();
-        controlState = false;
-        fail = 2;
-        return;
-    }
-
-    int wait_ret = Drfl_.mwait();
-
-    ROS_INFO("Stopping data saving...");
-    stopDataSaving();
-    controlState = false;
-
-    if (wait_ret != 1) {
-        ROS_ERROR("mwait reported motion failure.");
-        fail = 2;
-        return;
-    }
-
-    float final_position[NUMBER_OF_JOINT] = {0,};
-    robot_data = Drfl_.read_data_rt();
-    memcpy(final_position, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-
-    float distance = std::sqrt(
-        std::pow(final_position[0] - xpos[pointsNum - 1][0], 2) +
-        std::pow(final_position[1] - xpos[pointsNum - 1][1], 2) +
-        std::pow(final_position[2] - xpos[pointsNum - 1][2], 2));
-
-    if (distance > distance_threshold) {
-        ROS_ERROR("Failed to reach the goal position: distance = %f", distance);
-        fail = 2;
-    } else {
-        ROS_INFO("Succeeded in reaching the goal position: distance = %f", distance);
-        fail = 1;
-    }
-
+    if (distance > distance_threshold) fail = 2;
+    else fail = 1;
+    
     previous_msg = msg;
 }
 
 void ImpedanceControlLoop::operator_path(const moveit_msgs::CartesianTrajectory& msg) {
     if (msg.points.empty()) {
-        ROS_ERROR("Impedance operator_path received empty trajectory.");
         fail = 2;
         return;
     }
@@ -3748,303 +3911,145 @@ void ImpedanceControlLoop::operator_path(const moveit_msgs::CartesianTrajectory&
     control_mode_ = "Impedance path mode";
     operator_call_count_++;
 
-    LPRT_OUTPUT_DATA_LIST robot_data = Drfl_.read_data_rt();
+    LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt(); 
+    float current_joint[NUMBER_OF_JOINT] = {0, };
+    memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
+    memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
 
-    float current_joint[NUMBER_OF_JOINT] = {0,};
-    memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-    memcpy(current_position, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-
-    Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE);
+    Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE); 
     Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
-
-    const int originalPointsNum = static_cast<int>(msg.points.size());
-    const double duration = msg.points.back().time_from_start.toSec();
-
-    if (duration <= 0.0) {
-        ROS_ERROR("Invalid path duration: %.6f", duration);
-        fail = 2;
-        return;
-    }
-
-    const int newPointsNum = std::max(static_cast<int>(duration * 1000.0 / loop_time_), originalPointsNum);
+    
+    int originalPointsNum = msg.points.size();
+    double duration = msg.points.back().time_from_start.toSec();
+    int newPointsNum = static_cast<int>(duration * 1000/loop_time_);
 
     count = 0;
     sol_space = 0;
     count_motion = 0;
 
     Duration control_loop_time = Duration(loop_time_);
-    float st = static_cast<float>(loop_time_) / 1000.0f;
+    float st = static_cast<float>(loop_time_) / 1000;
 
-    LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
+    robot_state = Drfl_.read_data_rt();
     start_Motion(robot_state, prev, imp);
+    
+    float yaw_start = static_cast<float>(quatMsgToYawDeg(msg.points.front().point.pose.orientation));
+    float yaw_end   = static_cast<float>(quatMsgToYawDeg(msg.points.back().point.pose.orientation));
 
-    float delta_yaw =
-        quatMsgToYawDeg(msg.points.back().point.pose.orientation) -
-        quatMsgToYawDeg(msg.points.front().point.pose.orientation);
+    yaw_end = unwrapNear(yaw_end, yaw_start);
+    float delta_yaw = yaw_end - yaw_start;
 
-    std::cout << "Initiating joint 6 position before adjustment: " << current_joint[5] << std::endl;
-    std::cout << "Trajectory deviation of yaw : " << delta_yaw << std::endl;
-
-    if (current_joint[5] > 90.0f && delta_yaw > 0.0f) {
-        float prep_vel[2] = {70, 70};
-        float prep_acc[2] = {120, 120};
-        current_position[2] += 100.0f;
-
-        float goal_joint[NUMBER_OF_JOINT] = {0,};
+    if (current_joint[5] > 90 && delta_yaw > 0) {
+        float goal_joint[NUMBER_OF_JOINT];
+        current_position[2] += 100;
         LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(current_position, 2, COORDINATE_SYSTEM_BASE, 1);
-        for (int i = 0; i < 6; ++i) {
-            goal_joint[i] = res->_fTargetPos[i];
-        }
-        Drfl_.movej(goal_joint, 60, 30);
+        for (int i = 0; i < 6; i++) goal_joint[i] = res->_fTargetPos[i];
+        Drfl_.movej(goal_joint,60,30);
 
-        robot_data = Drfl_.read_data_rt();
-        memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-
-        current_joint[5] -= 360.0f;
+        robot_state = Drfl_.read_data_rt();
+        memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT*sizeof(float));
+        current_joint[5] -= 360;
         Drfl_.movej(current_joint, 60, 30);
 
-        robot_data = Drfl_.read_data_rt();
-        memcpy(current_position, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-
-        current_position[2] -= 100.0f;
-
+        robot_state = Drfl_.read_data_rt();
+        memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT*sizeof(float));
+        current_position[2] -= 100;
         LPINVERSE_KINEMATIC_RESPONSE res2 = Drfl_.ikin(current_position, 2, COORDINATE_SYSTEM_BASE, 1);
-        for (int i = 0; i < 6; ++i) {
-            goal_joint[i] = res2->_fTargetPos[i];
-        }
-        Drfl_.movej(goal_joint, 60, 30);
-    } else if (current_joint[5] < -90.0f && delta_yaw < 0.0f) {
-        float prep_vel[2] = {70, 70};
-        float prep_acc[2] = {120, 120};
-        current_position[2] += 100.0f;
-
-        float goal_joint[NUMBER_OF_JOINT] = {0,};
+        for (int i = 0; i < 6; i++) goal_joint[i] = res2->_fTargetPos[i];
+        Drfl_.movej(goal_joint,60,30);
+    }
+    else if (current_joint[5] < -90 && delta_yaw < 0) {
+        float goal_joint[NUMBER_OF_JOINT];
+        current_position[2] += 100;
         LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(current_position, 2, COORDINATE_SYSTEM_BASE, 1);
-        for (int i = 0; i < 6; ++i) {
-            goal_joint[i] = res->_fTargetPos[i];
-        }
-        Drfl_.movej(goal_joint, 60, 30);
+        for (int i = 0; i < 6; i++) goal_joint[i] = res->_fTargetPos[i];
+        Drfl_.movej(goal_joint,60,30);
 
-        robot_data = Drfl_.read_data_rt();
-        memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-
-        current_joint[5] += 360.0f;
+        robot_state = Drfl_.read_data_rt();
+        memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT*sizeof(float));
+        current_joint[5] += 360;
         Drfl_.movej(current_joint, 60, 30);
 
-        robot_data = Drfl_.read_data_rt();
-        memcpy(current_position, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-
-        current_position[2] -= 100.0f;
-
+        robot_state = Drfl_.read_data_rt();
+        memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT*sizeof(float));
+        current_position[2] -= 100;
         LPINVERSE_KINEMATIC_RESPONSE res2 = Drfl_.ikin(current_position, 2, COORDINATE_SYSTEM_BASE, 1);
-        for (int i = 0; i < 6; ++i) {
-            goal_joint[i] = res2->_fTargetPos[i];
-        }
-        Drfl_.movej(goal_joint, 60, 30);
-    } else {
-        std::cout << "No adjustment needed for joint 6: " << current_joint[5] << std::endl;
+        for (int i = 0; i < 6; i++) goal_joint[i] = res2->_fTargetPos[i];
+        Drfl_.movej(goal_joint,60,30);
     }
-
-    robot_data = Drfl_.read_data_rt();
-    memcpy(current_position, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-    memcpy(current_joint, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-
-    float distance_to_start = std::sqrt(
-        std::pow(msg.points[0].point.pose.position.x - current_position[0], 2) +
-        std::pow(msg.points[0].point.pose.position.y - current_position[1], 2) +
-        std::pow(msg.points[0].point.pose.position.z - current_position[2], 2));
-
-    if (distance_to_start > distance_threshold) {
-        ROS_ERROR("Error: The distance between current position and trajectory start point exceeds the threshold (distance = %f)", distance_to_start);
-        fail = 2;
-        return;
-    }
-
-    try {
-        trajectory_gen_.CurvePoints_ = trajectory_gen_.upsampleTrajectory(msg, newPointsNum);
-    } catch (const std::exception& e) {
-        ROS_ERROR("upsampleTrajectory failed: %s", e.what());
-        fail = 2;
-        return;
-    }
-
-    if (trajectory_gen_.CurvePoints_.empty()) {
-        ROS_ERROR("upsampleTrajectory produced empty CurvePoints_.");
-        fail = 2;
-        return;
-    }
-
-    Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE);
-    Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
+    
+    robot_state = Drfl_.read_data_rt(); 
+    memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
 
     auto start = std::chrono::high_resolution_clock::now();
-    auto start_time = std::chrono::high_resolution_clock::now();
+    float initiate_pos[NUMBER_OF_JOINT] = {0, };
 
-    loopTimes.clear();
-    controlState = true;
-    startDataSaving();
+    initiate_pos[0] = msg.points[0].point.pose.position.x;
+    initiate_pos[1] = msg.points[0].point.pose.position.y;
+    initiate_pos[2] = msg.points[0].point.pose.position.z;
+    initiate_pos[3] = current_position[3];
+    initiate_pos[4] = current_position[4];
 
-    while (true) {
+    float distance = std::sqrt(
+        std::pow(initiate_pos[0] - current_position[0], 2) +
+        std::pow(initiate_pos[1] - current_position[1], 2) +
+        std::pow(initiate_pos[2] - current_position[2], 2)
+    );
+
+    if (distance > distance_threshold) {
+        fail = 2;
+        return;
+    }
+
+    robot_state = Drfl_.read_data_rt(); 
+    memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT*sizeof(float));
+    memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT*sizeof(float));
+
+    trajectory_gen_.CurvePoints_ = trajectory_gen_.upsampleTrajectory(msg, newPointsNum);
+
+    Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE); 
+    Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
+    controlState = true; 
+
+    while (spinMotion_path(robot_state, control_loop_time, desired, sol_space) && spinControl(robot_state, control_loop_time, control_command, desired, sol_space)) {
         robot_state = Drfl_.read_data_rt();
+        
+        if (!exitLoop && !g_nKill_dsr_control) {
+            Drfl_.torque_rt(control_command.tau_d, st);
+            auto current = std::chrono::high_resolution_clock::now();
+            auto loop_time = std::chrono::duration_cast<std::chrono::milliseconds>(current - start);
 
-        if (!spinMotion_path(robot_state, control_loop_time, desired, sol_space) ||
-            !spinControl(robot_state, control_loop_time, control_command, desired, sol_space)) {
+            if (std::chrono::milliseconds(static_cast<int64_t>(control_loop_time.toMSec())) > loop_time) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int64_t>(control_loop_time.toMSec())) - loop_time);
+            }
+            start = std::chrono::high_resolution_clock::now();
+        } else {
+            fail = true;
             break;
         }
 
-        if (exitLoop || g_nKill_dsr_control) {
-            fail = 2;
-            std::cout << SKKU::fail << std::endl;
-            break;
-        }
-
-        Drfl_.torque_rt(control_command.tau_d, st);
-
-        auto current = std::chrono::high_resolution_clock::now();
-        auto loop_time = std::chrono::duration_cast<std::chrono::milliseconds>(current - start);
-        loopTimes.push_back(static_cast<uint64_t>(loop_time.count()));
-
-        auto control_loop_ms = std::chrono::milliseconds(static_cast<int64_t>(control_loop_time.toMSec()));
-
-        if (control_loop_ms > loop_time) {
-            std::this_thread::sleep_for(control_loop_ms - loop_time);
-        }
-
-        start = std::chrono::high_resolution_clock::now();
+        stopDataSaving();
         count++;
     }
 
-    ROS_INFO("Stopping data saving...");
-    stopDataSaving();
-    saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
+    previous_msg = msg;
     controlState = false;
 
-    robot_data = Drfl_.read_data_rt();
-
-    auto finished_time = std::chrono::high_resolution_clock::now();
-    auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(finished_time - start_time);
-    std::cout << "elapsed time: " << elapsed_time.count() << " ms" << std::endl;
-
     setScheduling(originalSetting_);
+    float final_position[NUMBER_OF_JOINT] = {0, };
+    memcpy(final_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
 
-    float final_position[NUMBER_OF_JOINT] = {0,};
-    memcpy(final_position, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-
-    float distance_to_goal = std::sqrt(
+    distance = std::sqrt(
         std::pow(final_position[0] - msg.points[originalPointsNum - 1].point.pose.position.x, 2) +
         std::pow(final_position[1] - msg.points[originalPointsNum - 1].point.pose.position.y, 2) +
-        std::pow(final_position[2] - msg.points[originalPointsNum - 1].point.pose.position.z, 2));
+        std::pow(final_position[2] - msg.points[originalPointsNum - 1].point.pose.position.z, 2)
+    );
 
-    if (fail != 2) {
-        if (distance_to_goal > distance_threshold) {
-            ROS_ERROR("Failed to reach the goal position: distance = %f", distance_to_goal);
-            fail = 2;
-        } else {
-            ROS_INFO("Succeeded in reaching the goal position: distance = %f", distance_to_goal);
-            fail = 1;
-        }
-    }
-
-    previous_msg = msg;
+    if (distance > distance_threshold) fail = 2;
+    else fail = 1;
 }
 
-void ControlLoop::GainMove() {
-    float step = 4;
-    float tvel[2] = {70, 70};
-    float tacc[2] = {120, 120};
-
-    struct Config {
-        float ztop;
-        float check_X1[6];
-        float check_X2[6];
-        float check_X3[6];
-        float check_X4[6];
-        float zdp;
-        float xdp;
-        float ydp;
-    };
-
-    std::vector<Config> configurations;
-    configurations.push_back({
-        600,
-        {300, -400, 600, 0, -180, 3.42},
-        {900, -400, 600, 0, -180, 3.42},
-        {900, 400, 600, 0, -180, 3.42},
-        {300, 400, 600, 0, -180, 3.42},
-        (600 - 360) / step,
-        (900 - 300) / (2 * step),
-        (400 + 400) / (2 * step)
-    });
-
-    for (const auto& config : configurations) {
-        float X1[6], X2[6], X3[6], X4[6];
-        float ztop = config.ztop;
-        memcpy(X1, config.check_X1, sizeof(config.check_X1));
-        memcpy(X2, config.check_X2, sizeof(config.check_X2));
-        memcpy(X3, config.check_X3, sizeof(config.check_X3));
-        memcpy(X4, config.check_X4, sizeof(config.check_X4));
-
-        for (int i = 0; i < step + 1; ++i) {
-            X1[2] = ztop - i * config.zdp;
-            X2[2] = ztop - i * config.zdp;
-            X3[2] = ztop - i * config.zdp;
-            X4[2] = ztop - i * config.zdp;
-
-            for (int j = 0; j < step; ++j) {
-                std::cout << "Moving X1: " << i + 1 << "th height, " << j + 1 << "th step!" << std::endl;
-                Drfl_.movel(X1, tvel, tacc);
-
-                std::cout << "Moving X2: " << i + 1 << "th height, " << j + 1 << "th step!" << std::endl;
-                Drfl_.movel(X2, tvel, tacc);
-
-                std::cout << "Moving X3: " << i + 1 << "th height, " << j + 1 << "th step!" << std::endl;
-                Drfl_.movel(X3, tvel, tacc);
-
-                std::cout << "Moving X4: " << i + 1 << "th height, " << j + 1 << "th step!" << std::endl;
-                Drfl_.movel(X4, tvel, tacc);
-
-                std::cout << "Returning to X1: " << i + 1 << "th height, " << j + 1 << "th step!" << std::endl;
-                Drfl_.movel(X1, tvel, tacc);
-
-                X1[0] += config.xdp;
-                X1[1] += config.ydp;
-                X2[0] -= config.xdp;
-                X2[1] += config.ydp;
-                X3[0] -= config.xdp;
-                X3[1] -= config.ydp;
-                X4[0] += config.xdp;
-                X4[1] -= config.ydp;
-            }
-
-            Drfl_.movejx(X1, 2, 5, 10);
-            X1[0] -= step * config.xdp;
-            X1[1] -= step * config.ydp;
-            X2[0] += step * config.xdp;
-            X2[1] -= step * config.ydp;
-            X3[0] += step * config.xdp;
-            X3[1] += step * config.ydp;
-            X4[0] -= step * config.xdp;
-            X4[1] += step * config.ydp;
-        }
-    }
-
-    gaincheckloop = true;
-}
-
-void ControlLoop::returnToHome() {
-    Drfl_.movej(home_abs, 60, 30);
-
-    LPRT_OUTPUT_DATA_LIST robot_data = Drfl_.read_data_rt();
-    memcpy(home_abs, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-    Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE);
-    Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
-}
-
-bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state,
-                             SKKU::Duration time_step,
-                             Desired& desired,
-                             int sol_space) {
-    (void)time_step;
+bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state, SKKU::Duration time_step, Desired& desired, int sol_space) {
     tra.time = static_cast<double>(count) * loop_time_ / 1000.0;
     trajectory_gen_.setLoopTime(loop_time_);
     bool correction_flag = false;
@@ -4059,12 +4064,7 @@ bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state,
         }
 
         Trajectory dummy_traj_for_ik;
-        float ref_rpy[3] = {
-            robot_state->actual_flange_position[3],
-            robot_state->actual_flange_position[4],
-            robot_state->actual_flange_position[5]
-        };
-        fillEulerDummyForIK(trajectory, dummy_traj_for_ik, count == 0, ref_rpy);
+        fillEulerDummyForIK(trajectory, dummy_traj_for_ik);
 
         auto [output, is_singular] =
             MotionGenerator(dummy_traj_for_ik, robot_state, prev, imp,
@@ -4078,16 +4078,10 @@ bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state,
         desired.q_d = output;
         return true;
     }
-
-    std::cout << "Trajectory duration reached. Motion finished." << std::endl;
     return false;
 }
 
-bool ControlLoop::spinMotion_path(const LPRT_OUTPUT_DATA_LIST& robot_state,
-                                  SKKU::Duration time_step,
-                                  Desired& desired,
-                                  int sol_space) {
-    (void)time_step;
+bool ControlLoop::spinMotion_path(const LPRT_OUTPUT_DATA_LIST& robot_state, SKKU::Duration time_step, Desired& desired, int sol_space) {
     bool correction_flag = false;
 
     if (count < trajectory_gen_.CurvePoints_.size()) {
@@ -4100,12 +4094,7 @@ bool ControlLoop::spinMotion_path(const LPRT_OUTPUT_DATA_LIST& robot_state,
         }
 
         Trajectory dummy_traj_for_ik;
-        float ref_rpy[3] = {
-            robot_state->actual_flange_position[3],
-            robot_state->actual_flange_position[4],
-            robot_state->actual_flange_position[5]
-        };
-        fillEulerDummyForIK(trajectory, dummy_traj_for_ik, count == 0, ref_rpy);
+        fillEulerDummyForIK(trajectory, dummy_traj_for_ik);
 
         auto [output, is_singular] =
             MotionGenerator(dummy_traj_for_ik, robot_state, prev, imp,
@@ -4118,114 +4107,82 @@ bool ControlLoop::spinMotion_path(const LPRT_OUTPUT_DATA_LIST& robot_state,
         desired.q_d = output;
         return !desired.motion_finished;
     }
-
     return desired.motion_finished;
 }
 
-bool ControlLoop::spinControl(const LPRT_OUTPUT_DATA_LIST& robot_state,
-                              SKKU::Duration time_step,
-                              Torques& command,
-                              Desired& desired,
-                              int sol_space) {
-    (void)time_step;
-    (void)sol_space;
-
+bool ControlLoop::spinControl(const LPRT_OUTPUT_DATA_LIST& robot_state, SKKU::Duration time_step, Torques& command, Desired& desired, int sol_space) {
     Torques control_output = ControlGenerator(trajectory, desired, robot_state, errors, count);
-
     for (int i = 0; i < 6; i++) {
         command.tau_d[i] = control_output.tau_d[i];
     }
-
     return !command.motion_finished;
 }
 
 void ControlLoop::saveLoopTimesToFile(const std::string& filePath) {
-    if (filePath.empty()) return;
-
     std::ofstream loopTimeFile(filePath, std::ios::app);
     if (loopTimeFile.is_open()) {
         for (const auto& time : loopTimes) {
             loopTimeFile << time << "\n";
         }
         loopTimeFile.close();
-        std::cout << "Loop times saved to " << filePath << std::endl;
-    } else {
-        std::cerr << "Failed to open " << filePath << std::endl;
     }
 }
 
 void ControlLoop::logData(const std::string& fileName, const float* data, int dataSize) {
-    if (!isDirectoryCreated && (operator_call_count_ >= 1)) {
+    if (!isDirectoryCreated && (operator_call_count_ == 1)) {
         createNewDataDirectory();
-        isDirectoryCreated = true;
+        isDirectoryCreated = true;  
     }
-
-    const std::string fullPath = dataDirectory + "/" + fileName;
-    std::ofstream file(fullPath, std::ios::app);
-
+    const std::string fullPath = dataDirectory +  "/" +fileName;
+    std::ofstream file(fullPath, std::ios::app);  
     if (file.is_open()) {
         for (int i = 0; i < dataSize - 1; ++i) {
             file << data[i] << "\t";
         }
         file << data[dataSize - 1] << std::endl;
         file.close();
-    } else {
-        std::cerr << "Unable to open file: " << fullPath
-                  << " | Error: " << strerror(errno) << std::endl;
     }
 }
 
-void ControlLoop::logMatrixData(const std::string& fileName,
-                                const float matrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT],
-                                int rows,
-                                int cols) {
-    if (!isDirectoryCreated && (operator_call_count_ >= 1)) {
+void ControlLoop::logMatrixData(const std::string& fileName, const float matrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT], int rows, int cols) {
+    if (!isDirectoryCreated && (operator_call_count_ == 1)) {
         createNewDataDirectory();
-        isDirectoryCreated = true;
+        isDirectoryCreated = true;  
     }
-
     const std::string fullPath = dataDirectory + "/" + fileName;
-    std::ofstream file(fullPath, std::ios::app);
-
+    std::ofstream file(fullPath, std::ios::app);  
     if (file.is_open()) {
         for (int i = 0; i < rows; ++i) {
             for (int j = 0; j < cols; ++j) {
                 file << std::setw(10) << matrix[i][j];
-                if (j < cols - 1) file << "\t";
+                if (j < cols - 1) {
+                    file << "\t";
+                }
             }
             file << std::endl;
         }
         file.close();
-    } else {
-        std::cerr << "Unable to open file: " << fullPath
-                  << " | Error: " << strerror(errno) << std::endl;
     }
 }
 
-void ControlLoop::logMatrixData3x3(const std::string& fileName,
-                                   const float matrix[3][3],
-                                   int rows,
-                                   int cols) {
-    if (!isDirectoryCreated && (operator_call_count_ >= 1)) {
+void ControlLoop::logMatrixData3x3(const std::string& fileName, const float matrix[3][3], int rows, int cols) {
+    if (!isDirectoryCreated && (operator_call_count_ == 1)) {
         createNewDataDirectory();
-        isDirectoryCreated = true;
+        isDirectoryCreated = true;  
     }
-
     const std::string fullPath = dataDirectory + "/" + fileName;
-    std::ofstream file(fullPath, std::ios::app);
-
+    std::ofstream file(fullPath, std::ios::app);  
     if (file.is_open()) {
         for (int i = 0; i < rows; ++i) {
             for (int j = 0; j < cols; ++j) {
                 file << std::setw(10) << matrix[i][j];
-                if (j < cols - 1) file << "\t";
+                if (j < cols - 1) {
+                    file << "\t";
+                }
             }
             file << std::endl;
         }
         file.close();
-    } else {
-        std::cerr << "Unable to open file: " << fullPath
-                  << " | Error: " << strerror(errno) << std::endl;
     }
 }
 
@@ -4234,87 +4191,77 @@ void ControlLoop::gaindataSavingThread() {
     float actual_position[NUMBER_OF_JOINT] = {0,};
     float raw_torque[NUMBER_OF_JOINT] = {0,};
     float external_torque[NUMBER_OF_JOINT] = {0,};
-    float traj_position[7] = {0,};
-
+    
+    float traj_position[7] = {0,}; 
+    
     float actual_positionj[NUMBER_OF_JOINT] = {0,};
     float impedance_position[NUMBER_OF_JOINT] = {0,};
     float F_external[NUMBER_OF_JOINT] = {0,};
     float position_command[NUMBER_OF_JOINT] = {0,};
     float F_impedance[NUMBER_OF_JOINT] = {0,};
     Duration control_loop_time = Duration(loop_time_);
+    float F_external_box[NUMBER_OF_JOINT] = {0,};
     float actual_position2[NUMBER_OF_JOINT] = {0,};
     float joint_error[NUMBER_OF_JOINT] = {0,};
+    float position_error[NUMBER_OF_JOINT] = {0,};
     float time[1] = {0,};
 
     auto start = std::chrono::high_resolution_clock::now();
     bool correction_flag = false;
-
-    while (!gaincheckloop) {
+    while (!gaincheckloop){
         LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
+        MotionGenerator(trajectory, robot_state, prev, imp, sol_space,correction_flag,operator_call_count_);
 
-        Trajectory dummy_traj_for_ik;
-        float ref_rpy[3] = {
-            robot_state->actual_flange_position[3],
-            robot_state->actual_flange_position[4],
-            robot_state->actual_flange_position[5]
-        };
-        fillEulerDummyForIK(trajectory, dummy_traj_for_ik, true, ref_rpy);
-
-        MotionGenerator(dummy_traj_for_ik, robot_state, prev, imp,
-                        sol_space, correction_flag, operator_call_count_);
-
-        LPRT_OUTPUT_DATA_LIST robot_data = Drfl_.read_data_rt();
-        memcpy(gravity_torque, robot_data->gravity_torque, NUMBER_OF_JOINT * sizeof(float));
-        memcpy(actual_position2, robot_data->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-        memcpy(raw_torque, robot_data->raw_joint_torque, NUMBER_OF_JOINT * sizeof(float));
-        memcpy(external_torque, robot_data->external_joint_torque, NUMBER_OF_JOINT * sizeof(float));
-        memcpy(actual_positionj, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-
+        memcpy(gravity_torque, robot_state->gravity_torque, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(actual_position2, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(raw_torque, robot_state->raw_joint_torque, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(external_torque, robot_state->external_joint_torque, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(actual_positionj, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
         LPROBOT_POSE res = Drfl_.fkin(actual_positionj, COORDINATE_SYSTEM_WORLD);
-        for (int i = 0; i < 6; i++) {
+        for(int i=0; i<6; i++){
             actual_position[i] = res->_fPosition[i];
         }
-
+        
         convertToArray(trajectory.pos_d, traj_position);
-
+        
         float traj_position_6d[6] = {0,};
-        traj_position_6d[0] = traj_position[0];
-        traj_position_6d[1] = traj_position[1];
-        traj_position_6d[2] = traj_position[2];
+        traj_position_6d[0] = traj_position[0]; 
+        traj_position_6d[1] = traj_position[1]; 
+        traj_position_6d[2] = traj_position[2]; 
 
         Eigen::Quaternionf q_gain_log(traj_position[6], traj_position[3], traj_position[4], traj_position[5]);
-        q_gain_log.normalize();
-        Eigen::Vector3f euler_gain = q_gain_log.toRotationMatrix().eulerAngles(2, 1, 0);
+        auto gain_rpy = quatToEulerDegZYX(q_gain_log);
 
-        traj_position_6d[3] = euler_gain[2] * RAD2DEG;
-        traj_position_6d[4] = euler_gain[1] * RAD2DEG;
-        traj_position_6d[5] = euler_gain[0] * RAD2DEG;
+        traj_position_6d[3] = gain_rpy[0];
+        traj_position_6d[4] = gain_rpy[1];
+        traj_position_6d[5] = gain_rpy[2];
 
-        for (int i = 0; i < 6; i++) {
-            impedance_position[i] = imp.pos_m(i);
-            position_command[i] = desired.q_d[i];
-            F_external[i] = F.Fext[i];
-            F_impedance[i] = F.Fimp[i];
-            joint_error[i] = position_command[i] - actual_positionj[i];
-        }
+        for (int i = 0; i<6 ; i++){
+        impedance_position[i] = imp.pos_m(i);
+        position_command[i] = desired.q_d[i];
+        F_external[i] = F.Fext[i];
+        F_impedance[i] = F.Fimp[i];
+        joint_error[i] = position_command[i] - actual_positionj[i];
         time[0] += dt;
+        }
 
-        logData("time.txt", time, 1);
+        logData("time.txt",time,1);
         logData("task_position.txt", actual_position, NUMBER_OF_JOINT);
-        logData("task_trajectory.txt", traj_position_6d, NUMBER_OF_JOINT);
+        logData("task_trajectory.txt", traj_position_6d, NUMBER_OF_JOINT); 
+    
         logData("joint_position.txt", actual_positionj, NUMBER_OF_JOINT);
         logData("joint_command.txt", position_command, NUMBER_OF_JOINT);
         logData("raw_torque.txt", raw_torque, NUMBER_OF_JOINT);
         logData("command_torque.txt", control_command.tau_d, NUMBER_OF_JOINT);
         logData("gravity_torque.txt", gravity_torque, NUMBER_OF_JOINT);
         logData("external_torque.txt", external_torque, NUMBER_OF_JOINT);
-        logData("force_external.txt", F_external, NUMBER_OF_JOINT);
+        logData("force_external.txt",F_external, NUMBER_OF_JOINT);
 
         auto current = std::chrono::high_resolution_clock::now();
         Duration save_time(std::chrono::duration_cast<std::chrono::milliseconds>(current - start));
-
+    
         if (control_loop_time > save_time) {
-            std::this_thread::sleep_for(control_loop_time() - save_time());
+        std::this_thread::sleep_for(control_loop_time() - save_time());
         }
         start = std::chrono::high_resolution_clock::now();
     }
@@ -4328,13 +4275,13 @@ void ControlLoop::dataSaving() {
     float trq_act[NUMBER_OF_JOINT] = {0,};
 
     float traj_position[7] = {0,};
-    float traj_velocity[7] = {0,};
-    float traj_acceleration[7] = {0,};
+    float traj_velocity[7] = {0,};    
+    float traj_acceleration[7] = {0,}; 
 
     float actual_positionj[NUMBER_OF_JOINT] = {0,};
     float actual_velocityj[NUMBER_OF_JOINT] = {0,};
     float accelerationj[NUMBER_OF_JOINT] = {0,};
-    float filtered_accelerationj[NUMBER_OF_JOINT] = {0,};
+    float filtered_accelerationj[NUMBER_OF_JOINT] = {0,}; 
     float impedance_position[NUMBER_OF_JOINT] = {0,};
     float F_external[NUMBER_OF_JOINT] = {0,};
     float F_DBIC[NUMBER_OF_JOINT] = {0,};
@@ -4356,10 +4303,10 @@ void ControlLoop::dataSaving() {
     float time[1] = {0,};
     float operator_count[1] = {static_cast<float>(operator_call_count_)};
     float controlMode[1];
-    float alpha = 0.1f;
-    float actual_quat[4] = {0,};
-    float traj_quat[4] = {0,};
-    float orientation_error[3] = {0,};
+    float alpha = 0.1;
+    float actual_quat[4] = {0,};       
+    float traj_quat[4] = {0,};         
+    float orientation_error[3] = {0,};  
 
     std::unordered_map<std::string, int> modeMap = {
         {"Position goal mode", 0},
@@ -4369,51 +4316,54 @@ void ControlLoop::dataSaving() {
     };
 
     auto it = modeMap.find(control_mode_);
+
     if (it != modeMap.end()) {
-        controlMode[0] = static_cast<float>(it->second);
+        switch (it->second) {
+            case 0: controlMode[0] = 0.0f; break;
+            case 1: controlMode[0] = 1.0f; break;
+            case 2: controlMode[0] = 2.0f; break;
+            case 3: controlMode[0] = 3.0f; break;
+            default: controlMode[0] = -1.0f; break;
+        }
     } else {
-        controlMode[0] = -1.0f;
+        controlMode[0] = -1.0f; 
     }
 
     static Eigen::Quaternionf q_act_prev = Eigen::Quaternionf::Identity();
     static Eigen::Quaternionf q_des_prev = Eigen::Quaternionf::Identity();
     static bool is_first_run = true;
-    static int last_operator_count = -1;
 
     float massMatrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT] = {{0,}};
     float coriolisMatrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT] = {{0,}};
     float jacobianMatrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT] = {{0,}};
     float rotationMatrix[3][3] = {{0,}};
-
+    
     auto start = std::chrono::high_resolution_clock::now();
 
-    while (data_saving_running_) {
-        LPRT_OUTPUT_DATA_LIST robot_data = Drfl_.read_data_rt();
-
-        memcpy(trq_g, robot_data->gravity_torque, NUMBER_OF_JOINT * sizeof(float));
-        memcpy(actual_position2, robot_data->actual_tcp_position, NUMBER_OF_JOINT * sizeof(float));
-        memcpy(trq_raw, robot_data->raw_joint_torque, NUMBER_OF_JOINT * sizeof(float));
-        memcpy(actual_positionj, robot_data->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-        memcpy(actual_velocityj, robot_data->actual_joint_velocity, NUMBER_OF_JOINT * sizeof(float));
-        memcpy(actual_velocity, robot_data->actual_flange_velocity, NUMBER_OF_JOINT * sizeof(float));
-        memcpy(F_external_box, robot_data->external_tcp_force, NUMBER_OF_JOINT * sizeof(float));
-        memcpy(trq_ext, robot_data->external_joint_torque, NUMBER_OF_JOINT * sizeof(float));
-        memcpy(trq_force, robot_data->raw_force_torque, NUMBER_OF_JOINT * sizeof(float));
-        memcpy(trq_act, robot_data->actual_joint_torque, NUMBER_OF_JOINT * sizeof(float));
+    while (data_saving_running_){
+        
+        LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
+        
+        memcpy(trq_g, robot_state->gravity_torque, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(actual_position2, robot_state->actual_tcp_position, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(trq_raw, robot_state->raw_joint_torque, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(actual_positionj, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(actual_velocityj, robot_state->actual_joint_velocity, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(actual_velocity, robot_state->actual_flange_velocity, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(F_external_box, robot_state->external_tcp_force, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(trq_ext, robot_state->external_joint_torque, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(trq_force, robot_state->raw_force_torque, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(trq_act, robot_state->actual_joint_torque, NUMBER_OF_JOINT * sizeof(float));
 
         for (int i = 0; i < NUMBER_OF_JOINT; ++i) {
-            accelerationj[i] = (actual_velocityj[i] - previous_velocityj[i]) / dt;
-            filtered_accelerationj[i] =
-                alpha * accelerationj[i] + (1.0f - alpha) * filtered_accelerationj[i];
+            accelerationj[i] = (actual_velocityj[i] - previous_velocityj[i]) / dt; 
+            filtered_accelerationj[i] = alpha * accelerationj[i] + (1 - alpha) * filtered_accelerationj[i];
             previous_velocityj[i] = actual_velocityj[i];
         }
-
-        memcpy(massMatrix, robot_data->mass_matrix,
-               NUMBER_OF_JOINT * NUMBER_OF_JOINT * sizeof(float));
-        memcpy(coriolisMatrix, robot_data->coriolis_matrix,
-               NUMBER_OF_JOINT * NUMBER_OF_JOINT * sizeof(float));
-        memcpy(jacobianMatrix, robot_data->jacobian_matrix,
-               NUMBER_OF_JOINT * NUMBER_OF_JOINT * sizeof(float));
+        
+        memcpy(massMatrix, robot_state->mass_matrix, NUMBER_OF_JOINT * NUMBER_OF_JOINT * sizeof(float));
+        memcpy(coriolisMatrix, robot_state->coriolis_matrix, NUMBER_OF_JOINT * NUMBER_OF_JOINT * sizeof(float));
+        memcpy(jacobianMatrix, robot_state->jacobian_matrix, NUMBER_OF_JOINT * NUMBER_OF_JOINT * sizeof(float));
         float(*result)[3] = Drfl_.get_current_rotm();
         LPROBOT_POSE res = Drfl_.fkin(actual_positionj, COORDINATE_SYSTEM_WORLD);
         float gripper_torque[NUMBER_OF_JOINT] = {0,};
@@ -4421,34 +4371,35 @@ void ControlLoop::dataSaving() {
         LPROBOT_FORCE lpForce = Drfl_.get_external_torque();
         Eigen::Map<const Eigen::Matrix<float, 6, 1>> trq_ext2(lpForce->_fForce);
 
-        for (int i = 0; i < 6; i++) {
+        Eigen::Map<Eigen::Matrix<float, 6, 6>> J(reinterpret_cast<float*>(jacobianMatrix));
+        Eigen::Matrix<float, 6, 6> J_Tinv = J.transpose().inverse();
+
+        for(int i=0; i<6; i++){
             actual_position[i] = res->_fPosition[i];
         }
-
         convertToArray(trajectory.pos_d, traj_position);
         convertToArray(trajectory.vel_d, traj_velocity);
         convertToArray(trajectory.acc_d, traj_acceleration);
 
         float traj_position_6d[6] = {0,};
-        traj_position_6d[0] = traj_position[0];
-        traj_position_6d[1] = traj_position[1];
-        traj_position_6d[2] = traj_position[2];
+        traj_position_6d[0] = traj_position[0]; 
+        traj_position_6d[1] = traj_position[1]; 
+        traj_position_6d[2] = traj_position[2]; 
 
         Eigen::Quaternionf q_traj_log(traj_position[6], traj_position[3], traj_position[4], traj_position[5]);
-        q_traj_log.normalize();
-        Eigen::Vector3f euler_traj_log = q_traj_log.toRotationMatrix().eulerAngles(2, 1, 0);
+        auto traj_rpy = quatToEulerDegZYX(q_traj_log);
 
-        traj_position_6d[3] = euler_traj_log[2] * RAD2DEG;
-        traj_position_6d[4] = euler_traj_log[1] * RAD2DEG;
-        traj_position_6d[5] = euler_traj_log[0] * RAD2DEG;
+        traj_position_6d[3] = traj_rpy[0];
+        traj_position_6d[4] = traj_rpy[1];
+        traj_position_6d[5] = traj_rpy[2];
 
-        for (int i = 0; i < 3; i++) {
-            for (int j = 0; j < 3; j++) {
+        for (int i=0; i<3; i++) {
+            for (int j=0; j<3; j++) {
                 rotationMatrix[i][j] = result[i][j];
             }
         }
 
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i<6 ; i++){
             impedance_position[i] = imp.pos_m(i);
             position_command[i] = desired.q_d[i];
             F_external[i] = F.Fext[i];
@@ -4458,23 +4409,23 @@ void ControlLoop::dataSaving() {
             F_rest[i] = F.F_rest[i];
             joint_error[i] = position_command[i] - actual_positionj[i];
             position_error[i] = impedance_position[i] - actual_position[i];
+            time[0] += dt;
             gripper_torque[i] = trq_gg[i];
             trq_ext_auto[i] = trq_ext2[i];
-            trq_ext_cal[i] = trq_raw[i] - trq_g[i];
+            trq_ext_cal[i] = trq_raw[i]-trq_g[i];
             sensor_FT[i] = sensor_data.AFT_wrench_[i];
             sensor_FT_matched[i] = sensor_data.AFT_wrench_matched[i];
         }
-        time[0] += dt;
 
         logData("filtered_acceleration.txt", filtered_accelerationj, NUMBER_OF_JOINT);
-        logData("time.txt", time, 1);
-        logData("Control mode.txt", controlMode, 1);
-        logData("gravity_torque.txt", trq_g, NUMBER_OF_JOINT);
+        logData("time.txt",time,1);
+        logData("Control mode.txt", controlMode, 1); 
+        logData("gravity_torque.txt", trq_g, NUMBER_OF_JOINT);  
         logData("task_position.txt", actual_position, NUMBER_OF_JOINT);
         logData("actual_velocity.txt", actual_velocity, NUMBER_OF_JOINT);
         logData("task_position2.txt", actual_position2, NUMBER_OF_JOINT);
         logData("raw_joint_torque.txt", trq_raw, NUMBER_OF_JOINT);
-        logData("task_trajectory.txt", traj_position_6d, NUMBER_OF_JOINT);
+        logData("task_trajectory.txt", traj_position_6d, NUMBER_OF_JOINT); 
         logData("task_velocity.txt", traj_velocity, NUMBER_OF_JOINT);
         logData("task_acceleration.txt", traj_acceleration, NUMBER_OF_JOINT);
         logData("joint_position.txt", actual_positionj, NUMBER_OF_JOINT);
@@ -4482,22 +4433,22 @@ void ControlLoop::dataSaving() {
         logData("command_torque.txt", control_command.tau_d, NUMBER_OF_JOINT);
         logData("impedance_position.txt", impedance_position, NUMBER_OF_JOINT);
         logData("joint_command.txt", position_command, NUMBER_OF_JOINT);
-        logData("force_external.txt", F_external, NUMBER_OF_JOINT);
-        logData("force_dbic.txt", F_DBIC, NUMBER_OF_JOINT);
-        logData("force_rest.txt", F_rest, NUMBER_OF_JOINT);
-        logData("force_coriolis.txt", F_coriolis, NUMBER_OF_JOINT);
-        logData("actual_joint_torque.txt", trq_act, NUMBER_OF_JOINT);
-        logData("force_external_box.txt", F_external_box, NUMBER_OF_JOINT);
-        logData("force_impedance.txt", F_impedance, NUMBER_OF_JOINT);
-        logData("joint_error.txt", joint_error, NUMBER_OF_JOINT);
-        logData("task_position_error.txt", position_error, NUMBER_OF_JOINT);
-        logData("external_joint_torque.txt", trq_ext, NUMBER_OF_JOINT);
-        logData("external_joint_torque_auto.txt", trq_ext_auto, NUMBER_OF_JOINT);
-        logData("external_joint_torque_cal.txt", trq_ext_cal, NUMBER_OF_JOINT);
-        logData("raw_force_torque.txt", trq_force, NUMBER_OF_JOINT);
-        logData("gripper_torque.txt", gripper_torque, NUMBER_OF_JOINT);
-        logData("sensor_FT.txt", sensor_FT, NUMBER_OF_JOINT);
-        logData("sensor_FT_matched.txt", sensor_FT_matched, NUMBER_OF_JOINT);
+        logData("force_external.txt",F_external, NUMBER_OF_JOINT);
+        logData("force_dbic.txt",F_DBIC, NUMBER_OF_JOINT);
+        logData("force_rest.txt",F_rest, NUMBER_OF_JOINT);
+        logData("force_coriolis.txt",F_coriolis, NUMBER_OF_JOINT);
+        logData("actual_joint_torque.txt",trq_act, NUMBER_OF_JOINT);
+        logData("force_external_box.txt",F_external_box, NUMBER_OF_JOINT);
+        logData("force_impedance.txt",F_impedance, NUMBER_OF_JOINT);
+        logData("joint_error.txt",joint_error, NUMBER_OF_JOINT);
+        logData("task_position_error.txt",position_error, NUMBER_OF_JOINT);
+        logData("external_joint_torque.txt",trq_ext, NUMBER_OF_JOINT);
+        logData("external_joint_torque_auto.txt",trq_ext_auto, NUMBER_OF_JOINT);
+        logData("external_joint_torque_cal.txt",trq_ext_cal, NUMBER_OF_JOINT);
+        logData("raw_force_torque.txt",trq_force, NUMBER_OF_JOINT);
+        logData("gripper_torque.txt",gripper_torque, NUMBER_OF_JOINT);
+        logData("sensor_FT.txt",sensor_FT, NUMBER_OF_JOINT);
+        logData("sensor_FT_matched.txt",sensor_FT_matched, NUMBER_OF_JOINT);
         logData("operator_count.txt", operator_count, 1);
         logMatrixData("mass_matrix.txt", massMatrix, NUMBER_OF_JOINT, NUMBER_OF_JOINT);
         logMatrixData("coriolis_matrix.txt", coriolisMatrix, NUMBER_OF_JOINT, NUMBER_OF_JOINT);
@@ -4507,18 +4458,13 @@ void ControlLoop::dataSaving() {
         float(*rotm_ptr)[3] = Drfl_.get_current_rotm();
         Eigen::Matrix3f R_act;
         R_act << rotm_ptr[0][0], rotm_ptr[0][1], rotm_ptr[0][2],
-                 rotm_ptr[1][0], rotm_ptr[1][1], rotm_ptr[1][2],
-                 rotm_ptr[2][0], rotm_ptr[2][1], rotm_ptr[2][2];
+                    rotm_ptr[1][0], rotm_ptr[1][1], rotm_ptr[1][2],
+                    rotm_ptr[2][0], rotm_ptr[2][1], rotm_ptr[2][2];
         Eigen::Quaternionf q_act(R_act);
-        q_act.normalize();
+        q_act.normalize(); 
 
         Eigen::Quaternionf q_des(traj_position[6], traj_position[3], traj_position[4], traj_position[5]);
-        q_des.normalize();
-
-        if (last_operator_count != operator_call_count_) {
-            is_first_run = true;
-            last_operator_count = operator_call_count_;
-        }
+        q_des.normalize(); 
 
         if (is_first_run) {
             q_act_prev = q_act;
@@ -4527,38 +4473,28 @@ void ControlLoop::dataSaving() {
         } else {
             if (q_act.coeffs().dot(q_act_prev.coeffs()) < 0.0f) q_act.coeffs() *= -1.0f;
             if (q_des.coeffs().dot(q_des_prev.coeffs()) < 0.0f) q_des.coeffs() *= -1.0f;
-
+            
             q_act_prev = q_act;
             q_des_prev = q_des;
         }
-
+        
         if (q_des.coeffs().dot(q_act.coeffs()) < 0.0f) {
             q_des.coeffs() *= -1.0f;
         }
         Eigen::Quaternionf q_err(q_act.inverse() * q_des);
-        Eigen::Vector3f e_rot = 2.0f * (q_act * q_err.vec());
+        Eigen::Vector3f e_rot = q_act * q_err.vec();
 
-        actual_quat[0] = q_act.x();
-        actual_quat[1] = q_act.y();
-        actual_quat[2] = q_act.z();
-        actual_quat[3] = q_act.w();
-
-        traj_quat[0] = q_des.x();
-        traj_quat[1] = q_des.y();
-        traj_quat[2] = q_des.z();
-        traj_quat[3] = q_des.w();
-
-        orientation_error[0] = e_rot.x();
-        orientation_error[1] = e_rot.y();
-        orientation_error[2] = e_rot.z();
+        actual_quat[0] = q_act.x(); actual_quat[1] = q_act.y(); actual_quat[2] = q_act.z(); actual_quat[3] = q_act.w();
+        traj_quat[0] = q_des.x();   traj_quat[1] = q_des.y();   traj_quat[2] = q_des.z();   traj_quat[3] = q_des.w();
+        orientation_error[0] = e_rot.x(); orientation_error[1] = e_rot.y(); orientation_error[2] = e_rot.z();
 
         logData("actual_quaternion.txt", actual_quat, 4);
         logData("traj_quaternion.txt", traj_quat, 4);
         logData("quat_orientation_error.txt", orientation_error, 3);
-
+        
         auto current = std::chrono::high_resolution_clock::now();
         Duration save_time(std::chrono::duration_cast<std::chrono::milliseconds>(current - start));
-
+    
         if (control_loop_time > save_time) {
             std::this_thread::sleep_for(control_loop_time() - save_time());
         }
@@ -4590,84 +4526,96 @@ void ControlLoop::convertToArray(const std::array<float, 7>& stdArray, float flo
     std::copy(stdArray.begin(), stdArray.end(), floatArray);
 }
 
-void TrajectoryGen::TrajectoryPlan(PlanParam* plan) {
-    float ps[7], vs[7], as[7];
-    float pf[7], vf[7], af[7];
-    float tf = plan->time;
+void ControlLoop::GainMove() {
+    float step = 4;
+    float tTime = 5;
+    float tvel[2] = { 70, 70 };
+    float tacc[2] = { 120, 120 };
 
-    for (int i = 0; i < 7; i++) {
-        ps[i] = plan->ps[i];
-        vs[i] = plan->vs[i];
-        as[i] = plan->as[i];
-        pf[i] = plan->pf[i];
-        vf[i] = plan->vf[i];
-        af[i] = plan->af[i];
+    struct Config {
+        float ztop;
+        float check_X1[6];
+        float check_X2[6];
+        float check_X3[6];
+        float check_X4[6];
+        float zdp;
+        float xdp;
+        float ydp;
+    };
+
+    std::vector<Config> configurations;
+
+    configurations.push_back({
+        600,
+        {300, -400, 600, 0, -180, 3.42},  // X1
+        {900, -400, 600, 0, -180, 3.42},  // X2
+        {900, 400, 600, 0, -180, 3.42},   // X3
+        {300, 400, 600, 0, -180, 3.42},   // X4
+        (600 - 360) / step,               // zdp
+        (900 - 300) / (2 * step),         // xdp
+        (400  + 400) / (2 * step)         // ydp
+        });
+
+    for (const auto& config : configurations) {
+        float X1[6], X2[6], X3[6], X4[6];
+        float ztop = config.ztop;
+        memcpy(X1, config.check_X1, sizeof(config.check_X1));
+        memcpy(X2, config.check_X2, sizeof(config.check_X2));
+        memcpy(X3, config.check_X3, sizeof(config.check_X3));
+        memcpy(X4, config.check_X4, sizeof(config.check_X4));
+
+        for (int i = 0; i < step + 1; ++i) {
+            X1[2] = ztop - i * config.zdp;
+            X2[2] = ztop - i * config.zdp;
+            X3[2] = ztop - i * config.zdp;
+            X4[2] = ztop - i * config.zdp;
+
+            for (int j = 0; j < step; ++j) {
+                Drfl_.movel(X1, tvel, tacc);
+                Drfl_.movel(X2, tvel, tacc);
+                Drfl_.movel(X3, tvel, tacc);
+                Drfl_.movel(X4, tvel, tacc);
+                Drfl_.movel(X1, tvel, tacc);
+
+                X1[0] += config.xdp;
+                X1[1] += config.ydp;
+                X2[0] -= config.xdp;
+                X2[1] += config.ydp;
+                X3[0] -= config.xdp;
+                X3[1] -= config.ydp;
+                X4[0] += config.xdp;
+                X4[1] -= config.ydp;
+            }
+
+            Drfl_.movejx(X1, 2, 5, 10);
+            X1[0] -= step * config.xdp;
+            X1[1] -= step * config.ydp;
+            X2[0] += step * config.xdp;
+            X2[1] -= step * config.ydp;
+            X3[0] += step * config.xdp;
+            X3[1] += step * config.ydp;
+            X4[0] -= step * config.xdp;
+            X4[1] += step * config.ydp;
+        }
     }
 
-    for (int i = 0; i < 7; i++) {
-        plan->A0[i] = ps[i];
-        plan->A1[i] = vs[i];
-        plan->A2[i] = as[i] / 2.0f;
-        plan->A3[i] =
-            (20.0f * pf[i] - 20.0f * ps[i] - (8.0f * vf[i] + 12.0f * vs[i]) * tf -
-             (3.0f * as[i] - af[i]) * tf * tf) /
-            (2.0f * tf * tf * tf);
-        plan->A4[i] =
-            (30.0f * ps[i] - 30.0f * pf[i] + (14.0f * vf[i] + 16.0f * vs[i]) * tf +
-             (3.0f * as[i] - 2.0f * af[i]) * tf * tf) /
-            (2.0f * tf * tf * tf * tf);
-        plan->A5[i] =
-            (12.0f * pf[i] - 12.0f * ps[i] - (6.0f * vf[i] + 6.0f * vs[i]) * tf -
-             (as[i] - af[i]) * tf * tf) /
-            (2.0f * tf * tf * tf * tf * tf);
-    }
+    gaincheckloop = true;
+    return;
 }
 
-void TrajectoryGen::TrajectoryGenerator(PlanParam* plan, TraParam* tra) {
-    double A0[7], A1[7], A2[7], A3[7], A4[7], A5[7];
-    double t = tra->time;
-
-    if (t <= plan->time) {
-        for (int i = 0; i < 7; i++) {
-            A0[i] = plan->A0[i];
-            A1[i] = plan->A1[i];
-            A2[i] = plan->A2[i];
-            A3[i] = plan->A3[i];
-            A4[i] = plan->A4[i];
-            A5[i] = plan->A5[i];
-        }
-
-        for (int i = 0; i < 7; i++) {
-            tra->pos[i] = A0[i] + A1[i] * t + A2[i] * t * t + A3[i] * t * t * t +
-                          A4[i] * t * t * t * t + A5[i] * t * t * t * t * t;
-            tra->vel[i] = A1[i] + 2.0 * A2[i] * t + 3.0 * A3[i] * t * t +
-                          4.0 * A4[i] * t * t * t + 5.0 * A5[i] * t * t * t * t;
-            tra->acc[i] =
-                2.0 * A2[i] + 6.0 * A3[i] * t + 12.0 * A4[i] * t * t + 20.0 * A5[i] * t * t * t;
-        }
-
-        double quat_norm = std::sqrt(tra->pos[3] * tra->pos[3] + tra->pos[4] * tra->pos[4] +
-                                     tra->pos[5] * tra->pos[5] + tra->pos[6] * tra->pos[6]);
-        if (quat_norm > 1e-6) {
-            for (int i = 3; i < 7; i++) {
-                tra->pos[i] /= quat_norm;
-            }
-        }
-    } else {
-        for (int i = 0; i < 7; i++) {
-            tra->pos[i] = plan->pf[i];
-            tra->vel[i] = plan->vf[i];
-            tra->acc[i] = plan->af[i];
-        }
-    }
+void ControlLoop::returnToHome() {
+    Drfl_.movej(home_abs, 60, 30);
+    LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
+    memcpy(home_abs,robot_state->actual_flange_position,NUMBER_OF_JOINT*sizeof(float));
+    Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE);
+    Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
 }
 
 void ControlLoop::createNewDataDirectory() {
     auto now = std::chrono::system_clock::now();
     auto in_time_t = std::chrono::system_clock::to_time_t(now);
-
     std::tm* now_tm = std::localtime(&in_time_t);
-
+    
     std::stringstream dateStream;
     dateStream << std::put_time(now_tm, "%y%m%d");
     std::string datePart = dateStream.str();
@@ -4676,8 +4624,7 @@ void ControlLoop::createNewDataDirectory() {
     timeStream << std::put_time(now_tm, "%H%M");
     std::string timePart = timeStream.str();
 
-    dataDirectory = "/home/rbl/catkin_ws/data/" + datePart + "_data/" + timePart;
-
+    dataDirectory = "/home/rbl/catkin_ws/data/" + datePart +"_data" +"/" + timePart;
     if (!fs::create_directories(dataDirectory)) {
         std::cerr << "Failed to create directory: " << dataDirectory << std::endl;
     } else {
@@ -4685,4 +4632,4 @@ void ControlLoop::createNewDataDirectory() {
     }
 }
 
-}  // namespace SKKU
+} // end of SKKU namespace

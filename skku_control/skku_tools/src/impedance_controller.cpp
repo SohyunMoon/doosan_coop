@@ -19,6 +19,35 @@
 
 cppflow::model MLP_model("/home/rbl/catkin_ws/src/skku-robot/model_RISE_250828_tf");
 
+// add
+namespace {
+    constexpr float DEG2RAD = static_cast<float>(M_PI) / 180.0f;
+
+    inline Eigen::Quaternionf normalizeQuat(Eigen::Quaternionf q) {
+        if (q.norm() < 1e-6f) {
+            return Eigen::Quaternionf::Identity();
+        }
+        q.normalize();
+        return q;
+    }
+
+    inline Eigen::Quaternionf quatFromEulerDeg(float roll_deg, float pitch_deg, float yaw_deg) {
+        Eigen::AngleAxisf rollAngle (roll_deg  * DEG2RAD, Eigen::Vector3f::UnitX());
+        Eigen::AngleAxisf pitchAngle(pitch_deg * DEG2RAD, Eigen::Vector3f::UnitY());
+        Eigen::AngleAxisf yawAngle  (yaw_deg   * DEG2RAD, Eigen::Vector3f::UnitZ());
+
+        Eigen::Quaternionf q = yawAngle * pitchAngle * rollAngle;
+        return normalizeQuat(q);
+    }
+
+    inline void alignQuatHemisphere(Eigen::Quaternionf& q, const Eigen::Quaternionf& ref) {
+        if (q.coeffs().dot(ref.coeffs()) < 0.0f) {
+            q.coeffs() *= -1.0f;
+        }
+    }
+}
+
+
 namespace SKKU
 {
     namespace fs = boost::filesystem;
@@ -124,29 +153,60 @@ namespace SKKU
         return a;
     }
 
+    // void PBIC::rungeKutta(float t0, Eigen::Matrix<float, 6, 1> &x0, Eigen::Matrix<float, 6, 1> &v0, Eigen::Matrix<float, 6, 1> imp_C)
+    // {
+    //     Eigen::Matrix<float, 6, 1> x(x0);
+    //     Eigen::Matrix<float, 6, 1> v(v0);
+
+    //     float t = t0;
+    //     float h = dt / n;
+
+    //     for (int i = 1; i <= n; i++)
+    //     {
+    //         Eigen::Matrix<float, 6, 1> k1v = h * v0;
+    //         Eigen::Matrix<float, 6, 1> k1a = h * f(x0, v0, imp_C);
+    //         Eigen::Matrix<float, 6, 1> k2v = h * (v0 + 0.5 * k1a);
+    //         Eigen::Matrix<float, 6, 1> k2a = h * f(x0 + 0.5 * k1v, v + 0.5 * k1a, imp_C);
+    //         Eigen::Matrix<float, 6, 1> k3v = h * (v0 + 0.5 * k2a);
+    //         Eigen::Matrix<float, 6, 1> k3a = h * f(x0 + 0.5 * k2v, v + 0.5 * k2a, imp_C);
+    //         Eigen::Matrix<float, 6, 1> k4v = h * (v0 + k3a);
+    //         Eigen::Matrix<float, 6, 1> k4a = h * f(x0 + k3v, v + k3a, imp_C);
+
+    //         x += (k1v + 2.0 * k2v + 2.0 * k3v + k4v) / 6.0;
+    //         v += (k1a + 2.0 * k2a + 2.0 * k3a + k4a) / 6.0;
+    //         t += h;
+    //     }
+    //     x0 = x;
+    //     v0 = v;
+    // }
+
     void PBIC::rungeKutta(float t0, Eigen::Matrix<float, 6, 1> &x0, Eigen::Matrix<float, 6, 1> &v0, Eigen::Matrix<float, 6, 1> imp_C)
     {
-        Eigen::Matrix<float, 6, 1> x(x0);
-        Eigen::Matrix<float, 6, 1> v(v0);
+        (void)t0;  // 현재 사용하지 않음
 
-        float t = t0;
-        float h = dt / n;
+        Eigen::Matrix<float, 6, 1> x = x0;
+        Eigen::Matrix<float, 6, 1> v = v0;
 
-        for (int i = 1; i <= n; i++)
+        const float h = dt / static_cast<float>(n);
+
+        for (int i = 0; i < n; ++i)
         {
-            Eigen::Matrix<float, 6, 1> k1v = h * v0;
-            Eigen::Matrix<float, 6, 1> k1a = h * f(x0, v0, imp_C);
-            Eigen::Matrix<float, 6, 1> k2v = h * (v0 + 0.5 * k1a);
-            Eigen::Matrix<float, 6, 1> k2a = h * f(x0 + 0.5 * k1v, v + 0.5 * k1a, imp_C);
-            Eigen::Matrix<float, 6, 1> k3v = h * (v0 + 0.5 * k2a);
-            Eigen::Matrix<float, 6, 1> k3a = h * f(x0 + 0.5 * k2v, v + 0.5 * k2a, imp_C);
-            Eigen::Matrix<float, 6, 1> k4v = h * (v0 + k3a);
-            Eigen::Matrix<float, 6, 1> k4a = h * f(x0 + k3v, v + k3a, imp_C);
+            Eigen::Matrix<float, 6, 1> k1x = v;
+            Eigen::Matrix<float, 6, 1> k1v = f(x, v, imp_C);
 
-            x += (k1v + 2.0 * k2v + 2.0 * k3v + k4v) / 6.0;
-            v += (k1a + 2.0 * k2a + 2.0 * k3a + k4a) / 6.0;
-            t += h;
+            Eigen::Matrix<float, 6, 1> k2x = v + 0.5f * h * k1v;
+            Eigen::Matrix<float, 6, 1> k2v = f(x + 0.5f * h * k1x, v + 0.5f * h * k1v, imp_C);
+
+            Eigen::Matrix<float, 6, 1> k3x = v + 0.5f * h * k2v;
+            Eigen::Matrix<float, 6, 1> k3v = f(x + 0.5f * h * k2x, v + 0.5f * h * k2v, imp_C);
+
+            Eigen::Matrix<float, 6, 1> k4x = v + h * k3v;
+            Eigen::Matrix<float, 6, 1> k4v = f(x + h * k3x, v + h * k3v, imp_C);
+
+            x += (h / 6.0f) * (k1x + 2.0f * k2x + 2.0f * k3x + k4x);
+            v += (h / 6.0f) * (k1v + 2.0f * k2v + 2.0f * k3v + k4v);
         }
+
         x0 = x;
         v0 = v;
     }
@@ -258,8 +318,8 @@ namespace SKKU
         // Eigen::Map<Eigen::Matrix<float, 6, 1>> x02Dot(trajectory.acc_d.data());
 
         Eigen::Map<Eigen::Matrix<float, 7, 1>> x0(trajectory.pos_d.data());
-        Eigen::Map<Eigen::Matrix<float, 7, 1>> x0Dot(trajectory.vel_d.data());
-        Eigen::Map<Eigen::Matrix<float, 7, 1>> x02Dot(trajectory.acc_d.data());
+        // Eigen::Map<Eigen::Matrix<float, 7, 1>> x0Dot(trajectory.vel_d.data());
+        // Eigen::Map<Eigen::Matrix<float, 7, 1>> x02Dot(trajectory.acc_d.data());
 
         memcpy(joint, robot_state->actual_joint_position, sizeof(float) * 6);
         memcpy(joint_velocity, robot_state->actual_joint_velocity, sizeof(float) * 6);
@@ -289,8 +349,11 @@ namespace SKKU
         //         1.0f,  1.0f,  0.0f;   // 자세 강성 (R, P, Y)
 
         
+        // P_DBIC << 10.0f,10.0f, 10.0f,  // 위치 강성 (X, Y, Z)
+        //         5.0f,  5.0f,  5.0f;   // 자세 강성 (R, P, Y)
+
         P_DBIC << 10.0f,10.0f, 10.0f,  // 위치 강성 (X, Y, Z)
-                5.0f,  5.0f,  5.0f;   // 자세 강성 (R, P, Y)
+        5.0f,  5.0f,  5.0f;   // 자세 강성 (R, P, Y)
 
         // 2. D_DBIC (Cartesian Damping: Ns/m, Nms/rad)s
         // 댐핑은 임계 댐핑(Critical Damping) 조건인 D = 2 * sqrt(K * M)을 고려해야 합니다.
@@ -299,42 +362,62 @@ namespace SKKU
         // D_DBIC << 5.0f,  5.0f,  5.0f,   // 위치 댐핑
         //         0.1f,   0.1f,   0.0f;    // 자세 댐핑
 
+        // D_DBIC << 1.0f,  1.0f,  1.0f,   // 위치 댐핑
+        //         0.0f,   0.0f,   0.0f;    // 자세 댐핑
+
         D_DBIC << 1.0f,  1.0f,  1.0f,   // 위치 댐핑
-                0.0f,   0.0f,   0.0f;    // 자세 댐핑
+        0.0f,   0.0f,   0.0f;    // 자세 댐핑
                 
-        qerr = qd-q;
+        // qerr = qd-q;
         Coriolis = C*qdot; 
 
 
-        // 1. 현재 로봇의 자세를 쿼터니언으로 변환 (실제 로봇 피드백 x는 여전히 RPY/deg 기준일 때)
-        Eigen::AngleAxisf rollAngle(x(3) * M_PI / 180.0f, Eigen::Vector3f::UnitX());
-        Eigen::AngleAxisf pitchAngle(x(4) * M_PI / 180.0f, Eigen::Vector3f::UnitY());
-        Eigen::AngleAxisf yawAngle(x(5) * M_PI / 180.0f, Eigen::Vector3f::UnitZ());
-        Eigen::Quaternionf q_actual = yawAngle * pitchAngle * rollAngle;
+        // // 1. 현재 로봇의 자세를 쿼터니언으로 변환 (실제 로봇 피드백 x는 여전히 RPY/deg 기준일 때)
+        // Eigen::AngleAxisf rollAngle(x(3) * M_PI / 180.0f, Eigen::Vector3f::UnitX());
+        // Eigen::AngleAxisf pitchAngle(x(4) * M_PI / 180.0f, Eigen::Vector3f::UnitY());
+        // Eigen::AngleAxisf yawAngle(x(5) * M_PI / 180.0f, Eigen::Vector3f::UnitZ());
+        // Eigen::Quaternionf q_actual = yawAngle * pitchAngle * rollAngle;
 
-        // 2. [수정] 목표 자세를 x0(3~6)에서 직접 쿼터니언으로 생성
-        // Eigen::Quaternionf constructor 순서는 (w, x, y, z)입니다.
-        // x0 mapping: 3=x, 4=y, 5=z, 6=w (TrajectoryGen::init에서 보낸 순서)
-        Eigen::Quaternionf q_desired(x0(6), x0(3), x0(4), x0(5));
-        q_desired.normalize(); // 수치적 안정성을 위해 정규화 수행
+        // // 2. [수정] 목표 자세를 x0(3~6)에서 직접 쿼터니언으로 생성
+        // // Eigen::Quaternionf constructor 순서는 (w, x, y, z)입니다.
+        // // x0 mapping: 3=x, 4=y, 5=z, 6=w (TrajectoryGen::init에서 보낸 순서)
+        // Eigen::Quaternionf q_desired(x0(6), x0(3), x0(4), x0(5));
+        // q_desired.normalize(); // 수치적 안정성을 위해 정규화 수행
 
-        // 3. 쿼터니언 오차 계산
-        Eigen::Matrix<float, 6, 1> error_x;
-        error_x.head(3) = x0.head(3) - x.head(3); // 위치 오차 (X, Y, Z)
+        // // 3. 쿼터니언 오차 계산
+        // Eigen::Matrix<float, 6, 1> error_x;
+        // error_x.head(3) = x0.head(3) - x.head(3); // 위치 오차 (X, Y, Z)
 
-        // [중요] Antipodal 보정 (최단 경로 선택)
-        if (q_desired.coeffs().dot(q_actual.coeffs()) < 0.0f) {
-            q_actual.coeffs() *= -1.0f; 
-        }
+        // // [중요] Antipodal 보정 (최단 경로 선택)
+        // if (q_desired.coeffs().dot(q_actual.coeffs()) < 0.0f) {
+        //     q_actual.coeffs() *= -1.0f; 
+        // }
 
-        // 쿼터니언 기반 오차 벡터 추출 (Vector-based Orientation Error)
-        // q_error = q_actual^-1 * q_desired
-        Eigen::Quaternionf q_error(q_actual.inverse() * q_desired);
+        // // 쿼터니언 기반 오차 벡터 추출 (Vector-based Orientation Error)
+        // // q_error = q_actual^-1 * q_desired
+        // Eigen::Quaternionf q_error(q_actual.inverse() * q_desired);
         
-        // Franka Control 등에서 사용하는 표준 오차 벡터 방식 적용
-        // 이 방식이 Roll/Pitch/Yaw보다 훨씬 안정적인 제어를 보장합니다.
-        error_x.tail(3) << 2.0f * (q_actual * q_error.vec());
+        // // Franka Control 등에서 사용하는 표준 오차 벡터 방식 적용
+        // // 이 방식이 Roll/Pitch/Yaw보다 훨씬 안정적인 제어를 보장합니다.
+        // error_x.tail(3) << 2.0f * (q_actual * q_error.vec());
 
+        // 1. 현재 로봇 자세(RPY/deg) -> quaternion
+        Eigen::Quaternionf q_actual = quatFromEulerDeg(x(3), x(4), x(5));
+
+        // 2. 목표 자세(quaternion trajectory)
+        Eigen::Quaternionf q_desired =
+            normalizeQuat(Eigen::Quaternionf(x0(6), x0(3), x0(4), x0(5)));
+
+        // 3. 최단 경로 hemisphere 정렬
+        alignQuatHemisphere(q_actual, q_desired);
+
+        // 4. 위치 + 자세 오차 계산
+        Eigen::Matrix<float, 6, 1> error_x;
+        error_x.head(3) = x0.head(3) - x.head(3);
+
+        // Eigen::Quaternionf q_error = normalizeQuat(q_actual.inverse() * q_desired);
+        Eigen::Quaternionf q_error = normalizeQuat(q_desired * q_actual.inverse());
+        error_x.tail(3) = 2.0f * (q_actual * q_error.vec());
 
         // 4. 오차 미분 및 필터링 (LPF 적용)
         Eigen::Matrix<float, 6, 1> derr_x;
@@ -361,15 +444,15 @@ namespace SKKU
         F_task += F_ext; // 외력 보상
         Eigen::Matrix<float, 6, 1> tau_task = J.transpose() * F_task;
 
-        // 7. Nullspace 제어 (로봇의 자세 유지 - Franka 코드의 필수 요소)
-        // 6-DOF라도 특이점 근처나 관절 한계 근처에서 안정성을 위해 사용
-        Eigen::Matrix<float, 6, 1> tau_nullspace;
-        Eigen::Matrix<float, 6, 6> I = Eigen::Matrix<float, 6, 6>::Identity();
-        Eigen::Matrix<float, 6, 6> J_inv = J.inverse(); // Pseudo-inverse 권장
+        // // 7. Nullspace 제어 (로봇의 자세 유지 - Franka 코드의 필수 요소)
+        // // 6-DOF라도 특이점 근처나 관절 한계 근처에서 안정성을 위해 사용
+        // Eigen::Matrix<float, 6, 1> tau_nullspace;
+        // Eigen::Matrix<float, 6, 6> I = Eigen::Matrix<float, 6, 6>::Identity();
+        // Eigen::Matrix<float, 6, 6> J_inv = J.inverse(); // Pseudo-inverse 권장
         
-        // 관절 강성(k_null)을 아주 작게 주어 현재 자세를 유지하려 함
-        float k_null = 0.5; 
-        tau_nullspace = (I - J.transpose() * J_inv.transpose()) * (k_null * (q - q)); // q_d 대신 현재 q 유지
+        // // 관절 강성(k_null)을 아주 작게 주어 현재 자세를 유지하려 함
+        // float k_null = 0.5; 
+        // tau_nullspace = (I - J.transpose() * J_inv.transpose()) * (k_null * (q - q)); // q_d 대신 현재 q 유지
 
         // for(int i=3; i<6; i++) error_x(i) = x_d(i) - x(i);
 
@@ -452,10 +535,16 @@ namespace SKKU
         // Eigen::Map<Eigen::Matrix<float, 6, 1>> vel(trajectory.vel_d.data());
         // Eigen::Map<Eigen::Matrix<float, 6, 1>> acc(trajectory.acc_d.data());
 
-        // ✅ 물리적 크기인 7차원으로 우선 매핑
-        Eigen::Map<Eigen::Matrix<float, 7, 1>> pos(trajectory.pos_d.data());
-        Eigen::Map<Eigen::Matrix<float, 7, 1>> vel(trajectory.vel_d.data());
-        Eigen::Map<Eigen::Matrix<float, 7, 1>> acc(trajectory.acc_d.data());
+        // // ✅ 물리적 크기인 7차원으로 우선 매핑
+        // Eigen::Map<Eigen::Matrix<float, 7, 1>> pos(trajectory.pos_d.data());
+        // Eigen::Map<Eigen::Matrix<float, 7, 1>> vel(trajectory.vel_d.data());
+        // Eigen::Map<Eigen::Matrix<float, 7, 1>> acc(trajectory.acc_d.data());
+
+        // 여기서 trajectory는 fillEulerDummyForIK()를 거친 Euler dummy trajectory입니다.
+        // 따라서 앞의 6개만 [x, y, z, roll, pitch, yaw]로 사용해야 합니다.
+        Eigen::Map<const Eigen::Matrix<float, 6, 1>> pos_euler(trajectory.pos_d.data());
+        Eigen::Map<const Eigen::Matrix<float, 6, 1>> vel_euler(trajectory.vel_d.data());
+        Eigen::Map<const Eigen::Matrix<float, 6, 1>> acc_euler(trajectory.acc_d.data());
 
         Eigen::Matrix<float, 6, 6> JPrev;
         float qd_sing[NUMBER_OF_JOINT] = {0,};
@@ -561,14 +650,24 @@ namespace SKKU
         // F_imp = M * (acc - imp.acc_m) + B * (vel - imp.vel_m) + K * (pos - imp.pos_m);
 
         // ✅ .head(6)을 사용해 앞의 6칸(X,Y,Z,Roll,Pitch,Yaw)만 추출하여 연산
-        imp_C = M_inv * (M * acc.head(6) + B * vel.head(6) + K * pos.head(6) + F_ext); 
+        // imp_C = M_inv * (M * acc.head(6) + B * vel.head(6) + K * pos.head(6) + F_ext); 
+
+        // rungeKutta(t_start, imp.pos_m, imp.vel_m, imp_C);
+
+        // imp.acc_m = M_inv * (-1 * B * imp.vel_m - K * imp.pos_m) + imp_C;
+        
+        // // ✅ 여기도 .head(6) 적용
+        // F_imp = M * (acc.head(6) - imp.acc_m) + B * (vel.head(6) - imp.vel_m) + K * (pos.head(6) - imp.pos_m);
+
+        imp_C = M_inv * (M * acc_euler + B * vel_euler + K * pos_euler + F_ext);
 
         rungeKutta(t_start, imp.pos_m, imp.vel_m, imp_C);
 
         imp.acc_m = M_inv * (-1 * B * imp.vel_m - K * imp.pos_m) + imp_C;
-        
-        // ✅ 여기도 .head(6) 적용
-        F_imp = M * (acc.head(6) - imp.acc_m) + B * (vel.head(6) - imp.vel_m) + K * (pos.head(6) - imp.pos_m);
+
+        F_imp = M * (acc_euler - imp.acc_m)
+            + B * (vel_euler - imp.vel_m)
+            + K * (pos_euler - imp.pos_m);
 
         for (int i = 0; i < 6; i++)
         {
@@ -583,19 +682,41 @@ namespace SKKU
         
         Eigen::VectorXf::Map(&x_d[0], 6) = imp.pos_m; // Impedance mode
         
-        // to check the SAFE CASES
-        x_d[3] = trajectory.pos_d[3];
-        x_d[4] = trajectory.pos_d[4];
+        // // to check the SAFE CASES
+        // x_d[3] = trajectory.pos_d[3];
+        // x_d[4] = trajectory.pos_d[4];
+        // x_d[5] = trajectory.pos_d[5];
 
-        x_d[5] = trajectory.pos_d[5];
+        // orientation은 dummy Euler trajectory 기준으로 유지
+        x_d[3] = pos_euler(3);
+        x_d[4] = pos_euler(4);
+        x_d[5] = pos_euler(5);
 
         float current_joint[NUMBER_OF_JOINT] = {0,};
         memcpy(current_joint, robot_state->actual_joint_position, sizeof(float) * 6);
 
+        // LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(x_d, 2, COORDINATE_SYSTEM_WORLD, 1);
+        // std::copy(res->_fTargetPos, res->_fTargetPos + 6, begin(des));
+
         LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(x_d, 2, COORDINATE_SYSTEM_WORLD, 1);
 
+        if (res == nullptr) {
+            ROS_WARN("MotionGenerator: IK failed. Holding current joint command.");
+
+            std::copy(robot_state->actual_joint_position,
+                    robot_state->actual_joint_position + 6,
+                    begin(des));
+
+            singularity_counter++;
+            if (singularity_counter >= 10) {
+                is_singular = true;
+            }
+
+            return {des, is_singular};
+        }
 
         std::copy(res->_fTargetPos, res->_fTargetPos + 6, begin(des));
+        singularity_counter = 0;
 
 
         // // deal with 6 joint ambiguity 
