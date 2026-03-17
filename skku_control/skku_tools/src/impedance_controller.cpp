@@ -415,8 +415,8 @@ namespace SKKU
         Eigen::Matrix<float, 6, 1> error_x;
         error_x.head(3) = x0.head(3) - x.head(3);
 
-        // Eigen::Quaternionf q_error = normalizeQuat(q_actual.inverse() * q_desired);
-        Eigen::Quaternionf q_error = normalizeQuat(q_desired * q_actual.inverse());
+        Eigen::Quaternionf q_error = normalizeQuat(q_actual.inverse() * q_desired);
+        // Eigen::Quaternionf q_error = normalizeQuat(q_desired * q_actual.inverse());
         error_x.tail(3) = 2.0f * (q_actual * q_error.vec());
 
         // 4. 오차 미분 및 필터링 (LPF 적용)
