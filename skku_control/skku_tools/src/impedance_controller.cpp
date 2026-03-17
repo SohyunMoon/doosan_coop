@@ -353,7 +353,7 @@ namespace SKKU
         //         5.0f,  5.0f,  5.0f;   // 자세 강성 (R, P, Y)
 
         P_DBIC << 10.0f,10.0f, 10.0f,  // 위치 강성 (X, Y, Z)
-        5.0f,  5.0f,  5.0f;   // 자세 강성 (R, P, Y)
+        0.0f,  0.0f,  0.0f;   // 자세 강성 (R, P, Y )
 
         // 2. D_DBIC (Cartesian Damping: Ns/m, Nms/rad)s
         // 댐핑은 임계 댐핑(Critical Damping) 조건인 D = 2 * sqrt(K * M)을 고려해야 합니다.
@@ -427,7 +427,7 @@ namespace SKKU
         // 실험 시작 시 초기화 (Folder 1416 튀는 문제 해결)
         if (count == 0) {
             error_x_prev = error_x;
-            derr_x_filtered.setZero();
+            derr_x_filtered.setZero();  
         }
 
         derr_x = (error_x - error_x_prev) / dt;
