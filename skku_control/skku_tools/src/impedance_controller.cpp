@@ -46,6 +46,74 @@ namespace {
         }
     }
 }
+//new0317
+namespace {
+    constexpr bool kRawJacobianIsFlange = true;  // DSR 문서 확인 후 false로 바꿀 수 있음
+
+    inline Eigen::Matrix<float, 6, 6> mapMat6(const float src[NUMBER_OF_JOINT][NUMBER_OF_JOINT]) {
+        Eigen::Matrix<float, 6, 6> out;
+        for (int i = 0; i < 6; ++i) {
+            for (int j = 0; j < 6; ++j) {
+                out(i, j) = src[i][j];
+            }
+        }
+        return out;
+    }
+
+    inline Eigen::Matrix<float, 6, 1> mapVec6(const float* src) {
+        Eigen::Matrix<float, 6, 1> out;
+        for (int i = 0; i < 6; ++i) out(i) = src[i];
+        return out;
+    }
+
+    inline Eigen::Matrix3f skew(const Eigen::Vector3f& r) {
+        Eigen::Matrix3f S;
+        S <<     0.f, -r.z(),  r.y(),
+              r.z(),     0.f, -r.x(),
+             -r.y(),  r.x(),    0.f;
+        return S;
+    }
+
+    inline Eigen::Matrix<float, 6, 6> twistShiftMatrix(const Eigen::Vector3f& r) {
+        Eigen::Matrix<float, 6, 6> X = Eigen::Matrix<float, 6, 6>::Identity();
+        X.block<3, 3>(0, 3) = -skew(r);
+        return X;
+    }
+
+    inline Eigen::Quaternionf quatFromRotm(const float (*R)[3]) {
+        Eigen::Matrix3f m;
+        m << R[0][0], R[0][1], R[0][2],
+             R[1][0], R[1][1], R[1][2],
+             R[2][0], R[2][1], R[2][2];
+        Eigen::Quaternionf q(m);
+        q.normalize();
+        return q;
+    }
+
+    inline Eigen::Vector3f quatLog(const Eigen::Quaternionf& q_in) {
+        Eigen::Quaternionf q = q_in.normalized();
+        if (q.w() < 0.0f) q.coeffs() *= -1.0f;
+
+        const float vnorm = q.vec().norm();
+        if (vnorm < 1e-8f) return Eigen::Vector3f::Zero();
+
+        const float angle = 2.0f * std::atan2(vnorm, q.w());
+        return (angle / vnorm) * q.vec();
+    }
+
+    inline Eigen::Vector3f quatLogError(const Eigen::Quaternionf& q_d,
+                                        const Eigen::Quaternionf& q) {
+        return quatLog(q_d * q.conjugate());
+    }
+
+    inline Eigen::Matrix<float, 6, 6> dampedPseudoInverse(
+        const Eigen::Matrix<float, 6, 6>& J,
+        float lambda) {
+        const Eigen::Matrix<float, 6, 6> I =
+            Eigen::Matrix<float, 6, 6>::Identity();
+        return J.transpose() * (J * J.transpose() + lambda * lambda * I).inverse();
+    }
+}//
 
 
 namespace SKKU
@@ -110,8 +178,9 @@ namespace SKKU
 
         return F_estimate;
     }
-
-    void PBIC::appendMatrixToFile_1(const Eigen::Matrix<float, 6, 1>& matrix, const string& filename) {
+    //new0317
+    //void PBIC::appendMatrixToFile_1(const Eigen::Matrix<float, 6, 1>& matrix, const string& filename) {
+    void PBIC::appendMatrixToFile_1(const Eigen::Matrix<float, 6, 1>& matrix, const std::string& filename){
         std::ofstream file;
         if (!isFileInitialized_1) {
             file.open(filename); // 파일을 처음 실행될 때만 초기화
@@ -127,8 +196,9 @@ namespace SKKU
             std::cerr << "Unable to open file " << filename << std::endl;
         }
     }
-
-    void PBIC::appendMatrixToFile_2(const Eigen::Matrix<float, 6, 1>& matrix, const string& filename) {
+    //new0317
+    //void PBIC::appendMatrixToFile_2(const Eigen::Matrix<float, 6, 1>& matrix, const string& filename) {
+    void PBIC::appendMatrixToFile_2(const Eigen::Matrix<float, 6, 1>& matrix, const std::string& filename){
         std::ofstream file;
         if (!isFileInitialized_2) {
             file.open(filename); // 파일을 처음 실행될 때만 초기화
@@ -266,9 +336,28 @@ namespace SKKU
             K2_inv[i] = 1 / K2[i];
             M_hat_inv[i] = 1 / M_hat[i];
         }
+        /*new0317
         M_inv = M.inverse();
 
-        dt = static_cast<float>(loop_time) / 1000;
+        dt = static_cast<float>(loop_time) / 1000;*/
+        M_inv = M.inverse();
+
+        // ---------------- DB-IC desired impedance (SI units) ----------------
+        // 시작점이니 실험하면서 다시 튜닝해.
+        Md_.setZero();
+        Bd_.setZero();
+        Kd_.setZero();
+
+        Md_.diagonal() << 20.0f, 20.0f, 20.0f, 0.15f, 0.15f, 0.15f;
+        Kd_.diagonal() << 400.0f, 400.0f, 400.0f, 8.0f, 8.0f, 8.0f;
+
+        for (int i = 0; i < 6; ++i) {
+            Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
+        }
+
+        Md_inv_ = Md_.inverse();
+
+        dt = static_cast<float>(loop_time) / 1000.0f;
     }
 
     void PBIC::start_Motion(LPRT_OUTPUT_DATA_LIST &robot_state, Prev &prev, Impedance &imp)
@@ -286,7 +375,163 @@ namespace SKKU
             imp.acc_m(i) = 0;
         }
     }
+    //new0317
+    TaskState PBIC::getTaskState(const LPRT_OUTPUT_DATA_LIST robot_state,
+                             TaskPointMode task_point_mode,
+                             const Eigen::Isometry3f& T_flange_tcp) {
+    TaskState s;
 
+    Eigen::Vector3f pF;
+    pF << robot_state->actual_flange_position[0] * 1e-3f,
+          robot_state->actual_flange_position[1] * 1e-3f,
+          robot_state->actual_flange_position[2] * 1e-3f;
+
+    float (*rotm_ptr)[3] = Drfl_.get_current_rotm();
+    Eigen::Quaternionf qF = quatFromRotm(rotm_ptr);
+
+    Eigen::Isometry3f T_B_F = Eigen::Isometry3f::Identity();
+    T_B_F.linear() = qF.toRotationMatrix();
+    T_B_F.translation() = pF;
+
+    Eigen::Isometry3f T_B_TCP = T_B_F * T_flange_tcp;
+    Eigen::Vector3f r_F_to_TCP = T_B_TCP.translation() - T_B_F.translation();
+
+    Eigen::Vector3f vF;
+    vF << robot_state->actual_flange_velocity[0] * 1e-3f,
+          robot_state->actual_flange_velocity[1] * 1e-3f,
+          robot_state->actual_flange_velocity[2] * 1e-3f;
+
+    Eigen::Vector3f wF;
+    wF << robot_state->actual_flange_velocity[3] * DEG2RAD,
+          robot_state->actual_flange_velocity[4] * DEG2RAD,
+          robot_state->actual_flange_velocity[5] * DEG2RAD;
+
+    if (task_point_mode == TaskPointMode::kTCP) {
+        s.p = T_B_TCP.translation();
+        s.q = Eigen::Quaternionf(T_B_TCP.linear());
+        s.q.normalize();
+        s.v = vF + wF.cross(r_F_to_TCP);
+        s.w = wF;
+    } else {
+        s.p = T_B_F.translation();
+        s.q = qF;
+        s.q.normalize();
+        s.v = vF;
+        s.w = wF;
+    }
+
+    Eigen::Matrix<float, 6, 6> J_raw = mapMat6(robot_state->jacobian_matrix);
+
+    if (kRawJacobianIsFlange) {
+        if (task_point_mode == TaskPointMode::kTCP) {
+            s.J = twistShiftMatrix(r_F_to_TCP) * J_raw;
+        } else {
+            s.J = J_raw;
+        }
+    } else {
+        if (task_point_mode == TaskPointMode::kTCP) {
+            s.J = J_raw;
+        } else {
+            s.J = twistShiftMatrix(-r_F_to_TCP) * J_raw;
+        }
+    }
+
+    // external_tcp_force는 TCP point, base/world frame, environment-on-robot 가정
+    Eigen::Matrix<float, 6, 1> wrench_tcp;
+    for (int i = 0; i < 6; ++i) {
+        wrench_tcp(i) = robot_state->external_tcp_force[i];
+    }
+
+    if (task_point_mode == TaskPointMode::kTCP) {
+        s.F_env_on_robot = wrench_tcp;
+    } else {
+        s.F_env_on_robot.head<3>() = wrench_tcp.head<3>();
+        s.F_env_on_robot.tail<3>() =
+            wrench_tcp.tail<3>() + r_F_to_TCP.cross(wrench_tcp.head<3>());
+    }
+
+    return s;
+    }
+    
+    Torques PBIC::ControlGeneratorDBIC(const TaskRef& ref,
+                                   const LPRT_OUTPUT_DATA_LIST robot_state,
+                                   TaskPointMode task_point_mode,
+                                   const Eigen::Isometry3f& T_flange_tcp) {
+    Torques torque = Torques();
+
+    TaskState s = getTaskState(robot_state, task_point_mode, T_flange_tcp);
+
+    Eigen::Matrix<float, 6, 6> Hhat = mapMat6(robot_state->mass_matrix);
+    Eigen::Matrix<float, 6, 6> Cmat = mapMat6(robot_state->coriolis_matrix);
+    Eigen::Matrix<float, 6, 1> g    = mapVec6(robot_state->gravity_torque);
+    Eigen::Matrix<float, 6, 1> qdot = mapVec6(robot_state->actual_joint_velocity);
+
+    // 논문 convention:
+    // Fe = robot-on-environment
+    // measured wrench는 보통 environment-on-robot 이므로 부호 반전
+    static Eigen::Matrix<float, 6, 1> Fe_filt = Eigen::Matrix<float, 6, 1>::Zero();
+    Eigen::Matrix<float, 6, 1> Fe_paper = -s.F_env_on_robot;
+    Fe_filt = 0.1f * Fe_paper + 0.9f * Fe_filt;
+    Fe_paper = Fe_filt;
+
+    Eigen::Matrix<float, 6, 1> e    = Eigen::Matrix<float, 6, 1>::Zero();
+    Eigen::Matrix<float, 6, 1> edot = Eigen::Matrix<float, 6, 1>::Zero();
+
+    e.head<3>()    = ref.p_d - s.p;
+    edot.head<3>() = ref.v_d - s.v;
+
+    e.tail<3>()    = quatLogError(ref.q_d, s.q);
+    edot.tail<3>() = ref.w_d - s.w;
+
+    Eigen::Matrix<float, 6, 1> xdd_d = Eigen::Matrix<float, 6, 1>::Zero();
+    xdd_d.head<3>() = ref.a_d;
+    xdd_d.tail<3>() = ref.alpha_d;
+
+    // ud = xdd_d + Md^-1 (Bd*edot + Kd*e - Fe)
+    Eigen::Matrix<float, 6, 1> u_d =
+        xdd_d + Md_inv_ * (Bd_ * edot + Kd_ * e - Fe_paper);
+
+    Eigen::Matrix<float, 6, 1> Jdot_qdot = Eigen::Matrix<float, 6, 1>::Zero();
+    if (has_prev_J_dbic_) {
+        Eigen::Matrix<float, 6, 6> Jdot = (s.J - J_prev_dbic_) / dt;
+        Jdot_qdot = 0.1f * (Jdot * qdot) + 0.9f * Jdot_qdot_prev_;
+        Jdot_qdot_prev_ = Jdot_qdot;
+    }
+    J_prev_dbic_ = s.J;
+    has_prev_J_dbic_ = true;
+
+    Eigen::Matrix<float, 6, 6> J_pinv = dampedPseudoInverse(s.J, 1e-4f);
+    Eigen::Matrix<float, 6, 1> Nhat = Cmat * qdot + g;
+
+    Eigen::Matrix<float, 6, 1> tau =
+        Hhat * J_pinv * (u_d - Jdot_qdot)
+        + Nhat
+        + s.J.transpose() * Fe_paper;
+
+    Eigen::Matrix<float, 6, 1> Fspring = Kd_ * e;
+    Eigen::Matrix<float, 6, 1> Fdamp   = Bd_ * edot;
+    Eigen::Matrix<float, 6, 1> Fdbic   = Fspring + Fdamp - Fe_paper;
+
+    for (int i = 0; i < 6; ++i) {
+        F.F_DBIC[i] = Fdbic(i);
+        F.F_rest[i] = Fspring(i);
+        F.F_coriolis[i] = Fdamp(i);
+        F.Fext[i] = s.F_env_on_robot(i);   // log는 measured wrench 기준
+        F.Fimp[i] = 0.0f;                  // DBIC에서는 별도 impedance model이 없음
+
+        if (tau(i) > torque_limit[i]) {
+            tau(i) = torque_limit[i];
+        } else if (tau(i) < -torque_limit[i]) {
+            tau(i) = -torque_limit[i];
+        }
+
+        torque.tau_d[i] = tau(i);
+    }
+
+    return torque;
+    }
+    //
+    
     Torques PBIC::ControlGenerator(Trajectory &trajectory, const Desired desired, const LPRT_OUTPUT_DATA_LIST robot_state, Errors &error, int count)
     {   
         std::array<float, 6> err = {0, };
@@ -353,7 +598,7 @@ namespace SKKU
         //         5.0f,  5.0f,  5.0f;   // 자세 강성 (R, P, Y)
 
         P_DBIC << 10.0f,10.0f, 10.0f,  // 위치 강성 (X, Y, Z)
-        0.0f,  0.0f,  0.0f;   // 자세 강성 (R, P, Y )
+        6.0f,  6.0f,  6.0f;   // 자세 강성 (R, P, Y )
 
         // 2. D_DBIC (Cartesian Damping: Ns/m, Nms/rad)s
         // 댐핑은 임계 댐핑(Critical Damping) 조건인 D = 2 * sqrt(K * M)을 고려해야 합니다.
@@ -441,6 +686,7 @@ namespace SKKU
             F_task(i) = P_DBIC(i) * error_x(i) + D_DBIC(i) * derr_x_filtered(i);
         }
 
+        //확인을 위해 잠시 주석처리
         F_task += F_ext; // 외력 보상
         Eigen::Matrix<float, 6, 1> tau_task = J.transpose() * F_task;
 
@@ -484,7 +730,19 @@ namespace SKKU
             // torque.tau_d[i] = M_hat_inv[i] * K1[i] / dt * (err[i] + K1_inv[i] * derr[i] + K1[i] * K2_inv[i] * err_integral[i]) + trq_gravity[i]; // w/o Gripper
             
             //DBIC 
-            torque.tau_d[i] = trq_DBIC[i];
+            //torque.tau_d[i] = trq_DBIC[i];
+            //new0317
+            // PBIC-TDC inner loop
+            torque.tau_d[i] =
+                M_hat_inv[i] * K1[i] / dt *
+                (err[i] + K1_inv[i] * derr[i] + K1[i] * K2_inv[i] * err_integral[i])
+                + trq_gravity[i];
+
+            // gripper 보정까지 넣고 싶으면 아래로 바꿔
+            // torque.tau_d[i] =
+            //     M_hat_inv[i] * K1[i] / dt *
+            //     (err[i] + K1_inv[i] * derr[i] + K1[i] * K2_inv[i] * err_integral[i])
+            //     + trq_gravity[i] - trq_gg[i];            
 
             //PBIC
             // torque.tau_d[i] = trq_PBIC[i];
