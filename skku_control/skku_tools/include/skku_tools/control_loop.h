@@ -12,6 +12,7 @@
 #include <moveit_msgs/CartesianTrajectory.h>
 #include <../../include/skku_control/dsr_hw_interface.h>
 
+
 extern bool controlState; 
 namespace SKKU {
 extern int fail;

@@ -61,6 +61,7 @@
 
 #define NUM_JOINT                (6)
 #define NUMBER_OF_JOINT          (6)
+#define CARTESIAN_QUAT_DIM 7 // 쿼터니언 기반 작업 공간 차원을 나타내는 매크로 새로 정의
 #define NUM_TASK                 (6)
 #define NUM_FLANGE_IO            (6)
 #define NUM_BUTTON               (5)
