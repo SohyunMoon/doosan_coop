@@ -17,7 +17,6 @@
 #include <net/if.h>
 #include <Eigen/Geometry>
 
-
 cppflow::model MLP_model("/home/rbl/catkin_ws/src/skku-robot/model_RISE_250828_tf");
 
 // add
@@ -376,6 +375,16 @@ namespace SKKU
             imp.acc_m(i) = 0;
         }
     }
+
+    void PBIC::resetDBICControllerState()
+    {
+        has_prev_J_dbic_ = false;
+        J_prev_dbic_.setZero();
+        Jdot_qdot_prev_.setZero();
+        Fe_filt_dbic_.setZero();
+        // Fe_filt.setZero(); // <--- Fe_filt 로 수정!
+    }
+
     //new0317
     TaskState PBIC::getTaskState(const LPRT_OUTPUT_DATA_LIST robot_state,
                              TaskPointMode task_point_mode,
@@ -470,10 +479,13 @@ namespace SKKU
     // 논문 convention:
     // Fe = robot-on-environment
     // measured wrench는 보통 environment-on-robot 이므로 부호 반전
-    static Eigen::Matrix<float, 6, 1> Fe_filt = Eigen::Matrix<float, 6, 1>::Zero();
+    // // static Eigen::Matrix<float, 6, 1> Fe_filt = Eigen::Matrix<float, 6, 1>::Zero();
+    // Eigen::Matrix<float, 6, 1> Fe_paper = -s.F_env_on_robot;
+    // Fe_filt = 0.1f * Fe_paper + 0.9f * Fe_filt;
+    // Fe_paper = Fe_filt;
     Eigen::Matrix<float, 6, 1> Fe_paper = -s.F_env_on_robot;
-    Fe_filt = 0.1f * Fe_paper + 0.9f * Fe_filt;
-    Fe_paper = Fe_filt;
+    Fe_filt_dbic_ = 0.1f * Fe_paper + 0.9f * Fe_filt_dbic_;
+    Fe_paper = Fe_filt_dbic_;
 
     Eigen::Matrix<float, 6, 1> e    = Eigen::Matrix<float, 6, 1>::Zero();
     Eigen::Matrix<float, 6, 1> edot = Eigen::Matrix<float, 6, 1>::Zero();
@@ -532,7 +544,7 @@ namespace SKKU
     return torque;
     }
     //
-
+    
     Torques PBIC::ControlGenerator(Trajectory &trajectory, const Desired desired, const LPRT_OUTPUT_DATA_LIST robot_state, Errors &error, int count)
     {   
         std::array<float, 6> err = {0, };
@@ -662,7 +674,6 @@ namespace SKKU
         error_x.head(3) = x0.head(3) - x.head(3);
 
         Eigen::Quaternionf q_error = normalizeQuat(q_actual.inverse() * q_desired);
-        // Eigen::Quaternionf q_error = normalizeQuat(q_desired * q_actual.inverse());
         error_x.tail(3) = 2.0f * (q_actual * q_error.vec());
 
         // 4. 오차 미분 및 필터링 (LPF 적용)
@@ -827,7 +838,9 @@ namespace SKKU
             for (int j = 0; j < NUMBER_OF_JOINT; ++j) {
                 J(i,j) = jacobianMatrix[i][j];
             }
-            F_ext(i) = F_box[i];
+            // F_ext(i) = F_box[i];
+            // 노이즈로 인한 토크 발산을 막기 위해 로우패스 필터(LPF) 적용 복구
+            F_ext(i) = 0.1f * F_box[i] + 0.9f * F_extPrev(i);
         }
 
         Eigen::Matrix<float, 1, 6> q_input_matrix;
@@ -840,7 +853,7 @@ namespace SKKU
             trq_ext_input_matrix(0, i) = trq_ext_input_array[i];
         }
 
-        F_estim = F_estimate(q_input_matrix, task_p_input_matrix, trq_ext_input_matrix);
+        // F_estim = F_estimate(q_input_matrix, task_p_input_matrix, trq_ext_input_matrix);
         
         // external force estimation 
         // F_ext = 0.1 * (J.transpose().inverse() * (trq_ext) - F_offset) + 0.9 * F_extPrev; // w/ Gripper 
@@ -951,20 +964,158 @@ namespace SKKU
         x_d[4] = pos_euler(4);
         x_d[5] = pos_euler(5);
 
+        // float current_joint[NUMBER_OF_JOINT] = {0,};
+        // memcpy(current_joint, robot_state->actual_joint_position, sizeof(float) * 6);
+
+        // // LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(x_d, 2, COORDINATE_SYSTEM_WORLD, 1);
+        // // std::copy(res->_fTargetPos, res->_fTargetPos + 6, begin(des));
+
+        // LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(x_d, 2, COORDINATE_SYSTEM_WORLD, 1);
+        // // LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(x_d, sol_space, COORDINATE_SYSTEM_WORLD, 1);
+
+        // if (res == nullptr) {
+        //     ROS_WARN("MotionGenerator: IK failed. Holding current joint command.");
+
+        //     std::copy(robot_state->actual_joint_position,
+        //             robot_state->actual_joint_position + 6,
+        //             begin(des));
+
+        //     singularity_counter++;
+        //     if (singularity_counter >= 10) {
+        //         is_singular = true;
+        //     }
+
+        //     return {des, is_singular};
+        // }
+
+        // std::copy(res->_fTargetPos, res->_fTargetPos + 6, begin(des));
+        // singularity_counter = 0;
+
+
+        // // // deal with 6 joint ambiguity 
+        // // float delta_angle = des[5] - current_joint[5];
+        // // if (delta_angle > 100.0) {
+        // //     std::cout << ": Adjusting by -180 degrees. "
+        // //         << "Original des: " << des[5] << ", Current joint: " << current_joint[5]
+        // //         << ", Delta angle: " << delta_angle << std::endl;
+        // //     des[5] -= 180.0;
+        // // } else if (delta_angle < -100.0) {
+        // //     std::cout << ": Adjusting by +180 degrees. "
+        // //         << "Original des: " << des[5] << ", Current joint: " << current_joint[5]
+        // //         << ", Delta angle: " << delta_angle << std::endl;
+        // //     des[5] += 180.0;
+        // // }
+
+        
+        // // qd calculation complete 
+        // bool singularity = false;
+        // bool reversed = false;
+
+
+        // if (count_motion == 0) {
+        //     memcpy(previous_joint_command, robot_state->actual_joint_position, sizeof(float) * 6);
+        // }
+
+        
+        // for (int i = 0; i < 6; i++) {
+
+        //     float delta = des[i] - current_joint[i];
+
+        //     // // check singularity
+        //     if (std::abs(delta) > 20) {
+        //         singularity = true;
+        //         std::cout<< "Singularity occured at "<<i<<"th joint, previous joint command : "<<current_joint[i]<<", desired joint command : "<<des[i]<< std::endl; 
+        //         ROS_INFO("SINGULARITY OCCURED");
+        //         singularity_counter++;
+        //         break;
+        //     }
+
+        // }
+
+        // if (singularity_counter >= 10) {
+        //     ROS_WARN("SINGULARITY PERSISTED FOR 10 FRAMES, EXITING FUNCTION.");
+        //     is_singular = true;
+        // }
+
+        // // if (!singularity) {
+        // //     singularity_counter = 0;
+        // // }
+
+
+        // // Adjust for singularity or first motion
+        // if (singularity && !reversed) {
+        //     for (int i = 0; i < 6; i++)
+        //     {
+        //         des[i] = current_joint[i];
+        //     } 
+        // }
+        
+        // std::copy(robot_state->actual_flange_position, robot_state->actual_flange_position + 6, begin(prev.xPrev));
+
+        // Eigen::VectorXf::Map(&prev.vPrev[0], 6) = imp.vel_m;
+        // Eigen::VectorXf::Map(&prev.F_extPrev[0], 6) = F_ext;
+        
+ 
+        // for (int i = 0; i < 6; i++)
+        // {
+        //     previous_joint_command[i] = des[i];
+        // } 
+
+        // count_motion ++;
+    
+        // return {des, is_singular};
+
         float current_joint[NUMBER_OF_JOINT] = {0,};
         memcpy(current_joint, robot_state->actual_joint_position, sizeof(float) * 6);
 
-        // LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(x_d, 2, COORDINATE_SYSTEM_WORLD, 1);
-        // std::copy(res->_fTargetPos, res->_fTargetPos + 6, begin(des));
+        // 새 motion 시작 시 branch continuity 기준을 현재 joint로 맞춤
+        if (count_motion == 0) {
+            memcpy(previous_joint_command,
+                   robot_state->actual_joint_position,
+                   sizeof(float) * 6);
+        }
 
-        LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(x_d, 2, COORDINATE_SYSTEM_WORLD, 1);
+        // ------------------------------------------------------------------
+        // IK를 하나의 solution space로만 풀지 말고,
+        // 이전 command와 가장 가까운 해를 선택해서 branch jump를 줄인다.
+        // ------------------------------------------------------------------
+        float best_des[NUMBER_OF_JOINT] = {0,};
+        bool found_solution = false;
+        float best_cost = 1.0e30f;
+        int best_sol_space = sol_space;
 
-        if (res == nullptr) {
-            ROS_WARN("MotionGenerator: IK failed. Holding current joint command.");
+        for (int cand_sol = 0; cand_sol < 8; ++cand_sol) {
+            LPINVERSE_KINEMATIC_RESPONSE cand =
+                Drfl_.ikin(x_d, cand_sol, COORDINATE_SYSTEM_WORLD, 1);
 
-            std::copy(robot_state->actual_joint_position,
-                    robot_state->actual_joint_position + 6,
-                    begin(des));
+            if (cand == nullptr) {
+                continue;
+            }
+
+            float cost = 0.0f;
+            for (int i = 0; i < 6; ++i) {
+                float delta = cand->_fTargetPos[i] - previous_joint_command[i];
+                while (delta > 180.0f) delta -= 360.0f;
+                while (delta < -180.0f) delta += 360.0f;
+                cost += delta * delta;
+            }
+
+            if (cost < best_cost) {
+                best_cost = cost;
+                best_sol_space = cand_sol;
+                for (int i = 0; i < 6; ++i) {
+                    best_des[i] = cand->_fTargetPos[i];
+                }
+                found_solution = true;
+            }
+        }
+
+        if (!found_solution) {
+            ROS_WARN("MotionGenerator: IK failed for all solution spaces. Holding previous joint command.");
+
+            for (int i = 0; i < 6; ++i) {
+                des[i] = previous_joint_command[i];
+            }
 
             singularity_counter++;
             if (singularity_counter >= 10) {
@@ -974,81 +1125,69 @@ namespace SKKU
             return {des, is_singular};
         }
 
-        std::copy(res->_fTargetPos, res->_fTargetPos + 6, begin(des));
-        singularity_counter = 0;
-
-
-        // // deal with 6 joint ambiguity 
-        // float delta_angle = des[5] - current_joint[5];
-        // if (delta_angle > 100.0) {
-        //     std::cout << ": Adjusting by -180 degrees. "
-        //         << "Original des: " << des[5] << ", Current joint: " << current_joint[5]
-        //         << ", Delta angle: " << delta_angle << std::endl;
-        //     des[5] -= 180.0;
-        // } else if (delta_angle < -100.0) {
-        //     std::cout << ": Adjusting by +180 degrees. "
-        //         << "Original des: " << des[5] << ", Current joint: " << current_joint[5]
-        //         << ", Delta angle: " << delta_angle << std::endl;
-        //     des[5] += 180.0;
-        // }
-
-        
-        // qd calculation complete 
-        bool singularity = false;
-        bool reversed = false;
-
-
-        if (count_motion == 0) {
-            memcpy(previous_joint_command, robot_state->actual_joint_position, sizeof(float) * 6);
+        sol_space = best_sol_space;
+        for (int i = 0; i < 6; ++i) {
+            des[i] = best_des[i];
         }
 
-        
-        for (int i = 0; i < 6; i++) {
+        // ------------------------------------------------------------------
+        // 여기서 보는 것은 "실제 singularity"가 아니라
+        // IK branch jump(갑작스러운 해 점프)다.
+        // current_joint가 아니라 previous_joint_command와 비교해야 한다.
+        // ------------------------------------------------------------------
+        bool branch_jump = false;
+        int jump_joint = -1;
+        float jump_delta = 0.0f;
 
-            float delta = des[i] - current_joint[i];
+        for (int i = 0; i < 6; ++i) {
+            float delta = des[i] - previous_joint_command[i];
+            while (delta > 180.0f) delta -= 360.0f;
+            while (delta < -180.0f) delta += 360.0f;
 
-            // // check singularity
-            // if (std::abs(delta) > 20) {
-            //     singularity = true;
-            //     std::cout<< "Singularity occured at "<<i<<"th joint, previous joint command : "<<current_joint[i]<<", desired joint command : "<<des[i]<< std::endl; 
-            //     ROS_INFO("SINGULARITY OCCURED");
-            //     singularity_counter++;
-            //     break;
-            // }
+            // 기존 20 deg는 너무 예민해서 false positive가 잘 난다.
+            if (std::abs(delta) > 35.0f) {
+                branch_jump = true;
+                jump_joint = i;
+                jump_delta = delta;
+                singularity_counter++;
+                break;
+            }
+        }
 
+        if (branch_jump) {
+            std::cout << "IK branch jump at joint " << jump_joint
+                      << ", prev_cmd : " << previous_joint_command[jump_joint]
+                      << ", ik_cmd : " << des[jump_joint]
+                      << ", delta : " << jump_delta
+                      << ", sol_space : " << best_sol_space << std::endl;
+            ROS_WARN("IK branch jump detected");
+
+            // 갑자기 다른 branch로 튀는 해는 쓰지 않고 이전 command를 유지
+            for (int i = 0; i < 6; ++i) {
+                des[i] = previous_joint_command[i];
+            }
+        } else {
+            singularity_counter = 0;
         }
 
         if (singularity_counter >= 10) {
-            ROS_WARN("SINGULARITY PERSISTED FOR 10 FRAMES, EXITING FUNCTION.");
+            ROS_WARN("IK branch jump persisted for 10 frames. Exiting motion.");
             is_singular = true;
         }
 
-        // if (!singularity) {
-        //     singularity_counter = 0;
-        // }
-
-
-        // Adjust for singularity or first motion
-        if (singularity && !reversed) {
-            for (int i = 0; i < 6; i++)
-            {
-                des[i] = current_joint[i];
-            } 
-        }
-        
-        std::copy(robot_state->actual_flange_position, robot_state->actual_flange_position + 6, begin(prev.xPrev));
+        std::copy(robot_state->actual_flange_position,
+                  robot_state->actual_flange_position + 6,
+                  begin(prev.xPrev));
 
         Eigen::VectorXf::Map(&prev.vPrev[0], 6) = imp.vel_m;
         Eigen::VectorXf::Map(&prev.F_extPrev[0], 6) = F_ext;
-        
- 
-        for (int i = 0; i < 6; i++)
-        {
-            previous_joint_command[i] = des[i];
-        } 
 
-        count_motion ++;
-    
+        for (int i = 0; i < 6; ++i) {
+            previous_joint_command[i] = des[i];
+        }
+
+        count_motion++;
+
         return {des, is_singular};
     }
 

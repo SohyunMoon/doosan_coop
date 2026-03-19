@@ -2971,24 +2971,24 @@ double working_mode;
 using namespace std::string_literals;  // NOLINT(google-build-using-namespace)
 bool controlState = false; 
 
-// Runtime setting
-Eigen::Isometry3f T_flange_tcp = Eigen::Isometry3f::Identity();
+// // Runtime setting
+// Eigen::Isometry3f T_flange_tcp = Eigen::Isometry3f::Identity();
 
-// 예시: flange에서 TCP까지 z축 +120 mm
-T_flange_tcp.translation() << 0.0f, 0.0f, 0.120f;
+// // 예시: flange에서 TCP까지 z축 +120 mm
+// T_flange_tcp.translation() << 0.0f, 0.0f, 0.120f;
 
-// tool orientation offset이 있으면 여기도 넣기
-// T_flange_tcp.linear() = ...
-control_loop.setToolTransform(T_flange_tcp);
+// // tool orientation offset이 있으면 여기도 넣기
+// // T_flange_tcp.linear() = ...
+// control_loop.setToolTransform(T_flange_tcp);
 
-// PBIC(TDC inner loop)
-// control_loop.setImpedanceImplMode(ImpedanceImplMode::kPBIC_TDC);
+// // PBIC(TDC inner loop)
+// // control_loop.setImpedanceImplMode(ImpedanceImplMode::kPBIC_TDC);
 
-// DBIC
-control_loop.setImpedanceImplMode(ImpedanceImplMode::kDBIC);
+// // DBIC
+// control_loop.setImpedanceImplMode(ImpedanceImplMode::kDBIC);
 
-// TCP 기준
-control_loop.setTaskPointMode(TaskPointMode::kTCP);
+// // TCP 기준
+// control_loop.setTaskPointMode(TaskPointMode::kTCP);
 
 // flange 기준 실험이면 이걸로 변경
 // control_loop.setTaskPointMode(TaskPointMode::kFlange);
@@ -4449,6 +4449,7 @@ void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& m
     operator_call_count_++;
     sol_space = 0;
     count = 0;
+    count_motion = 0;
 
     Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE); 
     Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
@@ -4734,6 +4735,8 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
 
     LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
 
+    resetDBICControllerState();
+
     TaskState current_tcp_state =
         getTaskState(robot_state, TaskPointMode::kTCP, T_flange_tcp_);
 
@@ -4831,6 +4834,8 @@ void ImpedanceControlLoop::runDBICPath(const moveit_msgs::CartesianTrajectory& m
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
     LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
+
+    resetDBICControllerState();
 
     TaskState current_tcp_state =
         getTaskState(robot_state, TaskPointMode::kTCP, T_flange_tcp_);
