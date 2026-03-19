@@ -17,6 +17,7 @@
 #include <net/if.h>
 #include <Eigen/Geometry>
 
+
 cppflow::model MLP_model("/home/rbl/catkin_ws/src/skku-robot/model_RISE_250828_tf");
 
 // add
@@ -531,7 +532,7 @@ namespace SKKU
     return torque;
     }
     //
-    
+
     Torques PBIC::ControlGenerator(Trajectory &trajectory, const Desired desired, const LPRT_OUTPUT_DATA_LIST robot_state, Errors &error, int count)
     {   
         std::array<float, 6> err = {0, };

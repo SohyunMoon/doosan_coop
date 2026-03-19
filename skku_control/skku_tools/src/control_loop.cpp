@@ -2971,24 +2971,24 @@ double working_mode;
 using namespace std::string_literals;  // NOLINT(google-build-using-namespace)
 bool controlState = false; 
 
-// // Runtime setting
-// Eigen::Isometry3f T_flange_tcp = Eigen::Isometry3f::Identity();
+// Runtime setting
+Eigen::Isometry3f T_flange_tcp = Eigen::Isometry3f::Identity();
 
-// // 예시: flange에서 TCP까지 z축 +120 mm
-// T_flange_tcp.translation() << 0.0f, 0.0f, 0.120f;
+// 예시: flange에서 TCP까지 z축 +120 mm
+T_flange_tcp.translation() << 0.0f, 0.0f, 0.120f;
 
-// // tool orientation offset이 있으면 여기도 넣기
-// // T_flange_tcp.linear() = ...
-// control_loop.setToolTransform(T_flange_tcp);
+// tool orientation offset이 있으면 여기도 넣기
+// T_flange_tcp.linear() = ...
+control_loop.setToolTransform(T_flange_tcp);
 
-// // PBIC(TDC inner loop)
-// // control_loop.setImpedanceImplMode(ImpedanceImplMode::kPBIC_TDC);
+// PBIC(TDC inner loop)
+// control_loop.setImpedanceImplMode(ImpedanceImplMode::kPBIC_TDC);
 
-// // DBIC
-// control_loop.setImpedanceImplMode(ImpedanceImplMode::kDBIC);
+// DBIC
+control_loop.setImpedanceImplMode(ImpedanceImplMode::kDBIC);
 
-// // TCP 기준
-// control_loop.setTaskPointMode(TaskPointMode::kTCP);
+// TCP 기준
+control_loop.setTaskPointMode(TaskPointMode::kTCP);
 
 // flange 기준 실험이면 이걸로 변경
 // control_loop.setTaskPointMode(TaskPointMode::kFlange);
