@@ -66,6 +66,14 @@ namespace {
         return out;
     }
 
+    inline Eigen::Matrix<float, 6, 1> mapJointVelDegToRad(const float* src_deg_s) {
+        Eigen::Matrix<float, 6, 1> out;
+        for (int i = 0; i < 6; ++i) {
+            out(i) = src_deg_s[i] * DEG2RAD;
+        }
+        return out;
+    }
+
     inline Eigen::Matrix3f skew(const Eigen::Vector3f& r) {
         Eigen::Matrix3f S;
         S <<     0.f, -r.z(),  r.y(),
@@ -494,11 +502,27 @@ namespace SKKU
         }
     }
 
+    // // ------------------------------------------------------------
+    // // DBIC에서는 actual_flange_velocity 대신 J * qdot 로 task velocity 계산
+    // // actual_flange_velocity가 0으로 들어오는 경우 damping이 죽는 문제를 막기 위함
+    // // ------------------------------------------------------------
+    // Eigen::Matrix<float, 6, 1> qdot_task = mapVec6(robot_state->actual_joint_velocity);
+    // Eigen::Matrix<float, 6, 1> twist_task = s.J * qdot_task;
+    // s.v = twist_task.head<3>();
+    // s.w = twist_task.tail<3>();
+
     // ------------------------------------------------------------
-    // DBIC에서는 actual_flange_velocity 대신 J * qdot 로 task velocity 계산
-    // actual_flange_velocity가 0으로 들어오는 경우 damping이 죽는 문제를 막기 위함
+    // DBIC는 SI 단위(m, rad, m/s, rad/s)로 계산한다.
+    // actual_joint_velocity는 raw joint unit이므로 rad/s로 변환해서 사용
     // ------------------------------------------------------------
-    Eigen::Matrix<float, 6, 1> qdot_task = mapVec6(robot_state->actual_joint_velocity);
+    // Eigen::Matrix<float, 6, 1> qdot_task =
+    //     mapJointVelDegToRad(robot_state->actual_joint_velocity);
+    // Eigen::Matrix<float, 6, 1> twist_task = s.J * qdot_task;
+    // s.v = twist_task.head<3>();   // [m/s]
+    // s.w = twist_task.tail<3>();   // [rad/s]    
+
+    Eigen::Matrix<float, 6, 1> qdot_task =
+        mapJointVelDegToRad(robot_state->actual_joint_velocity);
     Eigen::Matrix<float, 6, 1> twist_task = s.J * qdot_task;
     s.v = twist_task.head<3>();
     s.w = twist_task.tail<3>();
@@ -532,7 +556,9 @@ namespace SKKU
     Eigen::Matrix<float, 6, 6> Hhat = mapMat6(robot_state->mass_matrix);
     Eigen::Matrix<float, 6, 6> Cmat = mapMat6(robot_state->coriolis_matrix);
     Eigen::Matrix<float, 6, 1> g    = mapVec6(robot_state->gravity_torque);
-    Eigen::Matrix<float, 6, 1> qdot = mapVec6(robot_state->actual_joint_velocity);
+    // Eigen::Matrix<float, 6, 1> qdot = mapVec6(robot_state->actual_joint_velocity);
+    Eigen::Matrix<float, 6, 1> qdot =
+        mapJointVelDegToRad(robot_state->actual_joint_velocity);
 
     // 논문 convention:
     // Fe = robot-on-environment
@@ -725,6 +751,16 @@ namespace SKKU
     static int dbg_count_cmd = 0;
     if ((dbg_count_cmd++ % 100) == 0) {
         std::cout << "[DBIC CMD] tau_cmd: " << tau.transpose() << std::endl;
+    }
+
+    static int dbg_count_state = 0;
+    if ((dbg_count_state++ % 100) == 0) {
+        std::cout << "[DBIC ERR] e_xyz(mm): "
+                  << (1000.0f * e.head<3>()).transpose()
+                  << " | edot_xyz(m/s): " << edot.head<3>().transpose()
+                  << " | e_rot(rad): " << e.tail<3>().transpose()
+                  << " | tau_cmd: " << tau.transpose()
+                  << std::endl;
     }
 
     return torque;
@@ -968,6 +1004,16 @@ namespace SKKU
         qerrPrev = qerr;
         // Control Input
 
+        static int dbg_count_pbic = 0;
+        if ((dbg_count_pbic++ % 100) == 0) {
+            Eigen::Map<const Eigen::Matrix<float, 6, 1>> err_vec(err.data());
+            Eigen::Map<const Eigen::Matrix<float, 6, 1>> derr_vec(derr.data());
+
+            std::cout << "[PBIC ERR] e_joint(deg): " << err_vec.transpose()
+                    << " | de_joint(deg/s): " << derr_vec.transpose()
+                    << std::endl;
+        }
+        
         return torque;
     }
 
@@ -1117,7 +1163,12 @@ namespace SKKU
         // // ✅ 여기도 .head(6) 적용
         // F_imp = M * (acc.head(6) - imp.acc_m) + B * (vel.head(6) - imp.vel_m) + K * (pos.head(6) - imp.pos_m);
 
-        imp_C = M_inv * (M * acc_euler + B * vel_euler + K * pos_euler + F_ext);
+        // imp_C = M_inv * (M * acc_euler + B * vel_euler + K * pos_euler + F_ext);
+
+        // PBIC outer impedance model
+        // xdd_m = xdd_d + M^{-1}[ B(xd_dot - x_m_dot) + K(xd - x_m) - F_int ]
+        // F_ext는 environment-on-robot 기준으로 사용
+        imp_C = M_inv * (M * acc_euler + B * vel_euler + K * pos_euler - F_ext);
 
         rungeKutta(t_start, imp.pos_m, imp.vel_m, imp_C);
 

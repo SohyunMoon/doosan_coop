@@ -3547,7 +3547,13 @@ void TrajectoryGen::initDBICGoal(const Eigen::Vector3f& p0_m,
         alignQuatHemisphere(dbic_qf_, dbic_q0_);
     }
 
-    dbic_T_ = std::max(1e-3, msg.points[0].time_from_start.toSec());
+    // dbic_T_ = std::max(1e-3, msg.points[0].time_from_start.toSec());
+    
+    // DBIC free-space 디버그용:
+    // 너무 긴 goal time은 시작 acceleration이 너무 작아져서
+    // 실제로는 출발 안 하는 것처럼 보일 수 있다.
+    const double T_cmd = msg.points[0].time_from_start.toSec();
+    dbic_T_ = std::max(0.5, std::min(T_cmd, 5.0));
 }
 
 TaskRef TrajectoryGen::sampleDBICGoal(double t_sec, double dt_sec) const {
@@ -3592,7 +3598,11 @@ TaskRef TrajectoryGen::sampleDBICGoal(double t_sec, double dt_sec) const {
 
     ref.w_d     = 0.5f * (w_p + w_m);
     ref.alpha_d = (w_p - w_m) / static_cast<float>(dt_sec);
-    ref.motion_finished = (t_sec >= dbic_T_);
+    // ref.motion_finished = (t_sec >= dbic_T_);
+
+    // 마지막 샘플(t == T)은 한 번 제어기에 보내고,
+    // 그 다음 루프에서 종료되도록 한다.
+    ref.motion_finished = (t_sec > dbic_T_);
 
     return ref;
 }
@@ -3703,7 +3713,10 @@ void TrajectoryGen::initDBICPath(const Eigen::Vector3f& p0_m,
             / static_cast<float>(dt_local);
     }
 
-    dbic_path_samples_.back().motion_finished = true;
+    // dbic_path_samples_.back().motion_finished = true;
+
+    // 마지막 샘플도 한 번은 출력되게 한다.
+    dbic_path_samples_.back().motion_finished = false;
 }
 
 TaskRef TrajectoryGen::sampleDBICPath(size_t idx) const {
