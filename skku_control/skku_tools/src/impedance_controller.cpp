@@ -351,13 +351,26 @@ namespace SKKU
         // float zeta_pos = 1.2f;
         // float zeta_rot = 1.5f;
 
-        Md_.diagonal() << 20.0f, 20.0f, 20.0f, 0.15f, 0.15f, 0.15f;
-        // Kd_.diagonal() << 10.0f, 10.0f, 10.0f, 5.0f, 5.0f, 5.0f;
-        Kd_.diagonal() <<400.0f, 400.0f, 400.0f, 10.0f, 10.0f, 10.0f;
+        // Md_.diagonal() << 20.0f, 20.0f, 20.0f, 0.15f, 0.15f, 0.15f;
+        // // Kd_.diagonal() << 10.0f, 10.0f, 10.0f, 5.0f, 5.0f, 5.0f;
+        // Kd_.diagonal() <<400.0f, 400.0f, 400.0f, 10.0f, 10.0f, 10.0f;
         
+        // for (int i = 0; i < 6; ++i) {
+        //    Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
+        // }
+
+        // ---------------- DB-IC desired impedance (SI units) ----------------
+        // 기존 값(Md=20, Kd=10)은 실기에서 너무 약해서 출발을 못 하는 경우가 많다.
+        // 우선 translation을 확실히 살리고, rotation은 조금 낮게 둔다.
+        Md_.diagonal() << 5.0f, 5.0f, 5.0f, 0.10f, 0.10f, 0.10f;
+        Kd_.diagonal() << 200.0f, 200.0f, 250.0f, 8.0f, 8.0f, 6.0f;
+
         for (int i = 0; i < 6; ++i) {
-           Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
+            Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
         }
+
+        Md_inv_ = Md_.inverse();
+
         // for (int i = 0; i < 6; ++i) {
         //     float zeta = (i<3) ? zeta_pos : zeta_rot;
         //     Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
@@ -385,13 +398,22 @@ namespace SKKU
         }
     }
 
+    // void PBIC::resetDBICControllerState()
+    // {
+    //     has_prev_J_dbic_ = false;
+    //     J_prev_dbic_.setZero();
+    //     Jdot_qdot_prev_.setZero();
+    //     Fe_filt_dbic_.setZero();
+    //     // Fe_filt.setZero(); // <--- Fe_filt 로 수정!
+    // }
+
     void PBIC::resetDBICControllerState()
     {
         has_prev_J_dbic_ = false;
         J_prev_dbic_.setZero();
         Jdot_qdot_prev_.setZero();
         Fe_filt_dbic_.setZero();
-        // Fe_filt.setZero(); // <--- Fe_filt 로 수정!
+        tau_prev_dbic_.setZero();
     }
 
     //new0317
@@ -575,9 +597,64 @@ namespace SKKU
     xdd_d.head<3>() = ref.a_d;
     xdd_d.tail<3>() = ref.alpha_d;
 
+    // // [TEMP DEBUG]
+    // // 먼저 orientation을 잠깐 끄고 XYZ translation만 살아나는지 확인한다.
+    // e.tail<3>().setZero();
+    // edot.tail<3>().setZero();
+    // xdd_d.tail<3>().setZero();
+
     // ud = xdd_d + Md^-1 (Bd*edot + Kd*e - Fe)
     Eigen::Matrix<float, 6, 1> u_d =
         xdd_d + Md_inv_ * (Bd_ * edot + Kd_ * e - Fe_paper);
+
+    // Eigen::Matrix<float, 6, 1> Jdot_qdot = Eigen::Matrix<float, 6, 1>::Zero();
+    // if (has_prev_J_dbic_) {
+    //     Eigen::Matrix<float, 6, 6> Jdot = (s.J - J_prev_dbic_) / dt;
+    //     Jdot_qdot = 0.1f * (Jdot * qdot) + 0.9f * Jdot_qdot_prev_;
+    //     Jdot_qdot_prev_ = Jdot_qdot;
+    // }
+    // J_prev_dbic_ = s.J;
+    // has_prev_J_dbic_ = true;
+
+    // Eigen::Matrix<float, 6, 6> J_pinv = dampedPseudoInverse(s.J, 1e-4f);
+    // Eigen::Matrix<float, 6, 1> Nhat = Cmat * qdot + g;
+
+    // Eigen::Matrix<float, 6, 1> tau =
+    //     Hhat * J_pinv * (u_d - Jdot_qdot)
+    //     + Nhat
+    //     + s.J.transpose() * Fe_paper;
+
+    // static int dbg_count = 0;
+    // if ((dbg_count++ % 100) == 0) {
+    //     std::cout << "[DBIC DBG] e_xyz(mm): "
+    //               << (1000.0f * e.head<3>()).transpose()
+    //               << " | e_rot(rad): " << e.tail<3>().transpose()
+    //               << " | tau: " << tau.transpose() << std::endl;
+    // }
+
+    // Eigen::Matrix<float, 6, 1> Fspring = Kd_ * e;
+    // Eigen::Matrix<float, 6, 1> Fdamp   = Bd_ * edot;
+    // Eigen::Matrix<float, 6, 1> Fdbic   = Fspring + Fdamp - Fe_paper;
+
+    // for (int i = 0; i < 6; ++i) {
+    //     F.F_DBIC[i] = Fdbic(i);
+    //     F.F_rest[i] = Fspring(i);
+    //     F.F_coriolis[i] = Fdamp(i);
+    //     F.Fext[i] = s.F_env_on_robot(i);   // log는 measured wrench 기준
+    //     F.Fimp[i] = 0.0f;                  // DBIC에서는 별도 impedance model이 없음
+
+    //     if (tau(i) > torque_limit[i]) {
+    //         tau(i) = torque_limit[i];
+    //     } else if (tau(i) < -torque_limit[i]) {
+    //         tau(i) = -torque_limit[i];
+    //     }
+
+    //     torque.tau_d[i] = tau(i);
+    // }
+
+    auto clampf = [](float v, float lo, float hi) {
+        return (v < lo) ? lo : ((v > hi) ? hi : v);
+    };
 
     Eigen::Matrix<float, 6, 1> Jdot_qdot = Eigen::Matrix<float, 6, 1>::Zero();
     if (has_prev_J_dbic_) {
@@ -588,11 +665,31 @@ namespace SKKU
     J_prev_dbic_ = s.J;
     has_prev_J_dbic_ = true;
 
-    Eigen::Matrix<float, 6, 6> J_pinv = dampedPseudoInverse(s.J, 1e-4f);
+    // Jdot*qdot 순간 피크 제한
+    for (int i = 0; i < 3; ++i) {
+        Jdot_qdot(i) = clampf(Jdot_qdot(i), -1.0f, 1.0f);   // m/s^2
+    }
+    for (int i = 3; i < 6; ++i) {
+        Jdot_qdot(i) = clampf(Jdot_qdot(i), -2.0f, 2.0f);   // rad/s^2
+    }
+
+    // 기존 1e-4는 실기에서 너무 공격적이다.
+    // 우선 damping을 크게 줘서 near-singularity에서 토크 폭주를 막는다.
+    Eigen::Matrix<float, 6, 6> J_pinv = dampedPseudoInverse(s.J, 5e-2f);
     Eigen::Matrix<float, 6, 1> Nhat = Cmat * qdot + g;
 
+    Eigen::Matrix<float, 6, 1> task_cmd = u_d - Jdot_qdot;
+
+    // Cartesian acceleration command clamp
+    for (int i = 0; i < 3; ++i) {
+        task_cmd(i) = clampf(task_cmd(i), -0.8f, 0.8f);   // m/s^2
+    }
+    for (int i = 3; i < 6; ++i) {
+        task_cmd(i) = clampf(task_cmd(i), -1.0f, 1.0f);   // rad/s^2
+    }
+
     Eigen::Matrix<float, 6, 1> tau =
-        Hhat * J_pinv * (u_d - Jdot_qdot)
+        Hhat * J_pinv * task_cmd
         + Nhat
         + s.J.transpose() * Fe_paper;
 
@@ -600,20 +697,34 @@ namespace SKKU
     Eigen::Matrix<float, 6, 1> Fdamp   = Bd_ * edot;
     Eigen::Matrix<float, 6, 1> Fdbic   = Fspring + Fdamp - Fe_paper;
 
+    // 100 Hz 기준 토크 변화율 제한
+    const std::array<float, 6> tau_rate_limit_per_sec = {
+        800.0f, 800.0f, 600.0f, 200.0f, 200.0f, 200.0f
+    };
+
     for (int i = 0; i < 6; ++i) {
         F.F_DBIC[i] = Fdbic(i);
         F.F_rest[i] = Fspring(i);
         F.F_coriolis[i] = Fdamp(i);
-        F.Fext[i] = s.F_env_on_robot(i);   // log는 measured wrench 기준
-        F.Fimp[i] = 0.0f;                  // DBIC에서는 별도 impedance model이 없음
+        F.Fext[i] = s.F_env_on_robot(i);
+        F.Fimp[i] = 0.0f;
 
-        if (tau(i) > torque_limit[i]) {
-            tau(i) = torque_limit[i];
-        } else if (tau(i) < -torque_limit[i]) {
-            tau(i) = -torque_limit[i];
-        }
+        // slew-rate limit
+        const float max_delta = tau_rate_limit_per_sec[i] * dt;
+        tau(i) = clampf(tau(i),
+                        tau_prev_dbic_(i) - max_delta,
+                        tau_prev_dbic_(i) + max_delta);
+
+        // absolute torque limit
+        tau(i) = clampf(tau(i), -torque_limit[i], torque_limit[i]);
 
         torque.tau_d[i] = tau(i);
+        tau_prev_dbic_(i) = tau(i);
+    }
+
+    static int dbg_count_cmd = 0;
+    if ((dbg_count_cmd++ % 100) == 0) {
+        std::cout << "[DBIC CMD] tau_cmd: " << tau.transpose() << std::endl;
     }
 
     return torque;

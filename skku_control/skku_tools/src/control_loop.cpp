@@ -4737,10 +4737,15 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
 
     resetDBICControllerState();
 
-    TaskState current_tcp_state =
-        getTaskState(robot_state, TaskPointMode::kTCP, T_flange_tcp_);
+    // TaskState current_tcp_state =
+    //     getTaskState(robot_state, TaskPointMode::kTCP, T_flange_tcp_);
 
-    trajectory_gen_.initDBICGoal(current_tcp_state.p, current_tcp_state.q, msg);
+    // trajectory_gen_.initDBICGoal(current_tcp_state.p, current_tcp_state.q, msg);
+
+    TaskState current_task_state =
+        getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
+
+    trajectory_gen_.initDBICGoal(current_task_state.p, current_task_state.q, msg);
 
     Duration control_loop_time = Duration(loop_time_);
     float st = static_cast<float>(loop_time_) / 1000.0f;
@@ -4837,11 +4842,19 @@ void ImpedanceControlLoop::runDBICPath(const moveit_msgs::CartesianTrajectory& m
 
     resetDBICControllerState();
 
-    TaskState current_tcp_state =
-        getTaskState(robot_state, TaskPointMode::kTCP, T_flange_tcp_);
+    // TaskState current_tcp_state =
+    //     getTaskState(robot_state, TaskPointMode::kTCP, T_flange_tcp_);
 
-    trajectory_gen_.initDBICPath(current_tcp_state.p,
-                                 current_tcp_state.q,
+    // trajectory_gen_.initDBICPath(current_tcp_state.p,
+    //                              current_tcp_state.q,
+    //                              msg,
+    //                              static_cast<double>(loop_time_) * 1e-3);
+
+    TaskState current_task_state =
+        getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
+
+    trajectory_gen_.initDBICPath(current_task_state.p,
+                                 current_task_state.q,
                                  msg,
                                  static_cast<double>(loop_time_) * 1e-3);
 
