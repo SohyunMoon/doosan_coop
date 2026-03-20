@@ -5384,11 +5384,21 @@ void ControlLoop::dataSaving() {
     auto it = modeMap.find(control_mode_);
 
     if (it != modeMap.end()) {
+        // switch (it->second) {
+        //     case 0: controlMode[0] = 0.0f; break;
+        //     case 1: controlMode[0] = 1.0f; break;
+        //     case 2: controlMode[0] = 2.0f; break;
+        //     case 3: controlMode[0] = 3.0f; break;
+        //     default: controlMode[0] = -1.0f; break;
+        // }
+
         switch (it->second) {
             case 0: controlMode[0] = 0.0f; break;
             case 1: controlMode[0] = 1.0f; break;
             case 2: controlMode[0] = 2.0f; break;
             case 3: controlMode[0] = 3.0f; break;
+            case 4: controlMode[0] = 4.0f; break;
+            case 5: controlMode[0] = 5.0f; break;
             default: controlMode[0] = -1.0f; break;
         }
     } else {

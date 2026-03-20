@@ -283,7 +283,7 @@ namespace SKKU
 
     void PBIC::loadConfig()
     {
-            // Get the path of the current source file
+        // Get the path of the current source file
         std::string currentFilePath = __FILE__;
 
         // Extract the directory portion of the path to get the base directory
@@ -347,13 +347,22 @@ namespace SKKU
         Md_.setZero();
         Bd_.setZero();
         Kd_.setZero();
+        //0320add
+        // float zeta_pos = 1.2f;
+        // float zeta_rot = 1.5f;
 
         Md_.diagonal() << 20.0f, 20.0f, 20.0f, 0.15f, 0.15f, 0.15f;
-        Kd_.diagonal() << 400.0f, 400.0f, 400.0f, 8.0f, 8.0f, 8.0f;
-
+        // Kd_.diagonal() << 10.0f, 10.0f, 10.0f, 5.0f, 5.0f, 5.0f;
+        Kd_.diagonal() <<400.0f, 400.0f, 400.0f, 10.0f, 10.0f, 10.0f;
+        
         for (int i = 0; i < 6; ++i) {
-            Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
+           Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
         }
+        // for (int i = 0; i < 6; ++i) {
+        //     float zeta = (i<3) ? zeta_pos : zeta_rot;
+        //     Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
+        // }
+
 
         Md_inv_ = Md_.inverse();
 
@@ -432,6 +441,23 @@ namespace SKKU
 
     Eigen::Matrix<float, 6, 6> J_raw = mapMat6(robot_state->jacobian_matrix);
 
+    // if (kRawJacobianIsFlange) {
+    //     if (task_point_mode == TaskPointMode::kTCP) {
+    //         s.J = twistShiftMatrix(r_F_to_TCP) * J_raw;
+    //     } else {
+    //         s.J = J_raw;
+    //     }
+    // } else {
+    //     if (task_point_mode == TaskPointMode::kTCP) {
+    //         s.J = J_raw;
+    //     } else {
+    //         s.J = twistShiftMatrix(-r_F_to_TCP) * J_raw;
+    //     }
+    // }
+
+    // // external_tcp_force는 TCP point, base/world frame, environment-on-robot 가정
+    // Eigen::Matrix<float, 6, 1> wrench_tcp;
+
     if (kRawJacobianIsFlange) {
         if (task_point_mode == TaskPointMode::kTCP) {
             s.J = twistShiftMatrix(r_F_to_TCP) * J_raw;
@@ -446,8 +472,18 @@ namespace SKKU
         }
     }
 
+    // ------------------------------------------------------------
+    // DBIC에서는 actual_flange_velocity 대신 J * qdot 로 task velocity 계산
+    // actual_flange_velocity가 0으로 들어오는 경우 damping이 죽는 문제를 막기 위함
+    // ------------------------------------------------------------
+    Eigen::Matrix<float, 6, 1> qdot_task = mapVec6(robot_state->actual_joint_velocity);
+    Eigen::Matrix<float, 6, 1> twist_task = s.J * qdot_task;
+    s.v = twist_task.head<3>();
+    s.w = twist_task.tail<3>();
+
     // external_tcp_force는 TCP point, base/world frame, environment-on-robot 가정
     Eigen::Matrix<float, 6, 1> wrench_tcp;
+
     for (int i = 0; i < 6; ++i) {
         wrench_tcp(i) = robot_state->external_tcp_force[i];
     }
@@ -483,9 +519,48 @@ namespace SKKU
     // Eigen::Matrix<float, 6, 1> Fe_paper = -s.F_env_on_robot;
     // Fe_filt = 0.1f * Fe_paper + 0.9f * Fe_filt;
     // Fe_paper = Fe_filt;
-    Eigen::Matrix<float, 6, 1> Fe_paper = -s.F_env_on_robot;
-    Fe_filt_dbic_ = 0.1f * Fe_paper + 0.9f * Fe_filt_dbic_;
-    Fe_paper = Fe_filt_dbic_;
+    // Eigen::Matrix<float, 6, 1> Fe_paper = -s.F_env_on_robot;
+    // Fe_filt_dbic_ = 0.1f * Fe_paper + 0.9f * Fe_filt_dbic_;
+    // Fe_paper = Fe_filt_dbic_;
+
+    // ------------------------------------------------------------
+    // Safety-first DBIC:
+    // free-space goal reaching에서는 외력 coupling을 일단 끈다.
+    // 손으로 아래로 당길 때 로봇이 그 방향으로 가속하는 문제를 막기 위함
+    // ------------------------------------------------------------
+    const bool kUseExternalWrenchInDBIC = false;
+
+    Eigen::Matrix<float, 6, 1> Fe_paper = Eigen::Matrix<float, 6, 1>::Zero();
+
+    if (kUseExternalWrenchInDBIC) {
+        Eigen::Matrix<float, 6, 1> Fe_meas = -s.F_env_on_robot;
+
+        auto apply_deadband = [](float v, float th) {
+            return (std::abs(v) < th) ? 0.0f : v;
+        };
+        auto clamp_abs = [](float v, float lim) {
+            if (v > lim) return lim;
+            if (v < -lim) return -lim;
+            return v;
+        };
+
+        // translational force deadband / clamp
+        for (int i = 0; i < 3; ++i) {
+            Fe_meas(i) = apply_deadband(Fe_meas(i), 5.0f);   // 5 N 이하 무시
+            Fe_meas(i) = clamp_abs(Fe_meas(i), 20.0f);       // 최대 ±20 N
+        }
+
+        // rotational moment deadband / clamp
+        for (int i = 3; i < 6; ++i) {
+            Fe_meas(i) = apply_deadband(Fe_meas(i), 0.5f);   // 0.5 Nm 이하 무시
+            Fe_meas(i) = clamp_abs(Fe_meas(i), 2.0f);        // 최대 ±2 Nm
+        }
+
+        Fe_filt_dbic_ = 0.1f * Fe_meas + 0.9f * Fe_filt_dbic_;
+        Fe_paper = Fe_filt_dbic_;
+    } else {
+        Fe_filt_dbic_.setZero();
+    }
 
     Eigen::Matrix<float, 6, 1> e    = Eigen::Matrix<float, 6, 1>::Zero();
     Eigen::Matrix<float, 6, 1> edot = Eigen::Matrix<float, 6, 1>::Zero();
