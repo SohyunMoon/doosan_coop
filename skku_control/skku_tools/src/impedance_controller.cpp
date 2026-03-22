@@ -178,14 +178,9 @@ namespace SKKU
 
         Eigen::Matrix<float, 6, 1> F_estimate = output_data.transpose();
 
-        // Eigen::Matrix<float, 1, 6> output_data;
-        // for (int i = 0; i < 6; ++i) {F
-        //     output_data(0, i) = output_vector[i];
-        //     output_data(0, i) = output_data(0, i) * (output_scaler_max(0, i) - output_scaler_min(0, i)) + output_scaler_min(0, i);
-        // }
-
         return F_estimate;
     }
+
     //new0317
     //void PBIC::appendMatrixToFile_1(const Eigen::Matrix<float, 6, 1>& matrix, const string& filename) {
     void PBIC::appendMatrixToFile_1(const Eigen::Matrix<float, 6, 1>& matrix, const std::string& filename){
@@ -230,33 +225,6 @@ namespace SKKU
         a = M_inv * (-1 * B * v - K * x) + imp_C;
         return a;
     }
-
-    // void PBIC::rungeKutta(float t0, Eigen::Matrix<float, 6, 1> &x0, Eigen::Matrix<float, 6, 1> &v0, Eigen::Matrix<float, 6, 1> imp_C)
-    // {
-    //     Eigen::Matrix<float, 6, 1> x(x0);
-    //     Eigen::Matrix<float, 6, 1> v(v0);
-
-    //     float t = t0;
-    //     float h = dt / n;
-
-    //     for (int i = 1; i <= n; i++)
-    //     {
-    //         Eigen::Matrix<float, 6, 1> k1v = h * v0;
-    //         Eigen::Matrix<float, 6, 1> k1a = h * f(x0, v0, imp_C);
-    //         Eigen::Matrix<float, 6, 1> k2v = h * (v0 + 0.5 * k1a);
-    //         Eigen::Matrix<float, 6, 1> k2a = h * f(x0 + 0.5 * k1v, v + 0.5 * k1a, imp_C);
-    //         Eigen::Matrix<float, 6, 1> k3v = h * (v0 + 0.5 * k2a);
-    //         Eigen::Matrix<float, 6, 1> k3a = h * f(x0 + 0.5 * k2v, v + 0.5 * k2a, imp_C);
-    //         Eigen::Matrix<float, 6, 1> k4v = h * (v0 + k3a);
-    //         Eigen::Matrix<float, 6, 1> k4a = h * f(x0 + k3v, v + k3a, imp_C);
-
-    //         x += (k1v + 2.0 * k2v + 2.0 * k3v + k4v) / 6.0;
-    //         v += (k1a + 2.0 * k2a + 2.0 * k3a + k4a) / 6.0;
-    //         t += h;
-    //     }
-    //     x0 = x;
-    //     v0 = v;
-    // }
 
     void PBIC::rungeKutta(float t0, Eigen::Matrix<float, 6, 1> &x0, Eigen::Matrix<float, 6, 1> &v0, Eigen::Matrix<float, 6, 1> imp_C)
     {
@@ -323,11 +291,6 @@ namespace SKKU
             B_gains[i] = 8 * sqrt(K_gains[i] * M_gains[i]); // 4 Overdmaped
             // B_gains[i] = 0.5 * sqrt(K_gains[i] * M_gains[i]); // 2 Underdmaped
         }
-
-    
-     
-
-        
     }
 
     PBIC::PBIC(u_int64_t loop_time, DRAFramework::CDRFLEx &Drfl) : Drfl_(std::move(Drfl))
@@ -345,33 +308,23 @@ namespace SKKU
             M_hat_inv[i] = 1 / M_hat[i];
         }
         /*new0317
-        M_inv = M.inverse();
 
         dt = static_cast<float>(loop_time) / 1000;*/
         M_inv = M.inverse();
 
-        // ---------------- DB-IC desired impedance (SI units) ----------------
-        // 시작점이니 실험하면서 다시 튜닝해.
+
+        // ------------------------------------------------------------
+        // DBIC tuning for current z-lift free-space test
+        // z translation authority를 키우고, rotation coupling은 약하게 둔다.
+        // ------------------------------------------------------------
         Md_.setZero();
         Bd_.setZero();
         Kd_.setZero();
-        //0320add
-        // float zeta_pos = 1.2f;
-        // float zeta_rot = 1.5f;
 
-        // Md_.diagonal() << 20.0f, 20.0f, 20.0f, 0.15f, 0.15f, 0.15f;
-        // // Kd_.diagonal() << 10.0f, 10.0f, 10.0f, 5.0f, 5.0f, 5.0f;
-        // Kd_.diagonal() <<400.0f, 400.0f, 400.0f, 10.0f, 10.0f, 10.0f;
-        
-        // for (int i = 0; i < 6; ++i) {
-        //    Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
-        // }
 
-        // ---------------- DB-IC desired impedance (SI units) ----------------
-        // 기존 값(Md=20, Kd=10)은 실기에서 너무 약해서 출발을 못 하는 경우가 많다.
-        // 우선 translation을 확실히 살리고, rotation은 조금 낮게 둔다.
-        Md_.diagonal() << 5.0f, 5.0f, 5.0f, 0.10f, 0.10f, 0.10f;
-        Kd_.diagonal() << 200.0f, 200.0f, 250.0f, 8.0f, 8.0f, 6.0f;
+        // 행렬에 들어가는 6개의 숫자들은 차례대로 [X, Y, Z, Roll, Pitch, Yaw] 축을 의미
+        Md_.diagonal() << 5.0f, 5.0f, 2.0f, 0.20f, 0.20f, 0.20f;
+        Kd_.diagonal() << 200.0f, 200.0f, 200.0f, 100.0f, 100.0f, 100.0f;
 
         for (int i = 0; i < 6; ++i) {
             Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
@@ -379,13 +332,29 @@ namespace SKKU
 
         Md_inv_ = Md_.inverse();
 
-        // for (int i = 0; i < 6; ++i) {
-        //     float zeta = (i<3) ? zeta_pos : zeta_rot;
-        //     Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
-        // }
+    // // ------------------------------------------------------------
+    // // DB-IC desired impedance
+    // // Kang 2009의 DB-IC/제안법 비교 실험은
+    // // translational desired impedance를 직접 (Md, Bd, Kd)로 설계한다.
+    // // 즉 Bd를 critical damping으로 자동 계산하지 말고 직접 지정한다.
+    // // ------------------------------------------------------------
+    // Md_.setZero();
+    // Bd_.setZero();
+    // Kd_.setZero();
 
+    // // translational axes: paper-style desired impedance
+    // // Kang 2009 experiment: Md=20, Bd=900, Kd=400 (2-DOF translational)
+    // // 현재 6-DOF에서는 XYZ에 같은 철학을 적용
+    // Md_(0,0) = 20.0f;  Md_(1,1) = 20.0f;  Md_(2,2) = 20.0f;
+    // Bd_(0,0) = 900.0f; Bd_(1,1) = 900.0f; Bd_(2,2) = 900.0f;
+    // Kd_(0,0) = 400.0f; Kd_(1,1) = 400.0f; Kd_(2,2) = 400.0f;
 
-        Md_inv_ = Md_.inverse();
+    // // rotational axes: 현재 논문에 직접 값이 없으므로 보수적으로 둔다.
+    // Md_(3,3) = 0.20f;  Md_(4,4) = 0.20f;  Md_(5,5) = 0.20f;
+    // Bd_(3,3) = 10.0f;  Bd_(4,4) = 10.0f;  Bd_(5,5) = 10.0f;
+    // Kd_(3,3) = 5.0f;   Kd_(4,4) = 5.0f;   Kd_(5,5) = 5.0f;
+
+    // Md_inv_ = Md_.inverse();
 
         dt = static_cast<float>(loop_time) / 1000.0f;
     }
@@ -420,56 +389,63 @@ namespace SKKU
         has_prev_J_dbic_ = false;
         J_prev_dbic_.setZero();
         Jdot_qdot_prev_.setZero();
+
         Fe_filt_dbic_.setZero();
+        Fe_bias_dbic_.setZero();
+        Fe_bias_accum_dbic_.setZero();
+        Fe_bias_count_dbic_ = 0;
+        fe_bias_ready_dbic_ = false;
+
         tau_prev_dbic_.setZero();
     }
 
     //new0317
-    TaskState PBIC::getTaskState(const LPRT_OUTPUT_DATA_LIST robot_state,
-                             TaskPointMode task_point_mode,
-                             const Eigen::Isometry3f& T_flange_tcp) {
-    TaskState s;
+    //new0322
+    // TaskState PBIC::getTaskState(const LPRT_OUTPUT_DATA_LIST robot_state,
+    //                          TaskPointMode task_point_mode,
+    //                          const Eigen::Isometry3f& T_flange_tcp) {
+    // TaskState s;
 
-    Eigen::Vector3f pF;
-    pF << robot_state->actual_flange_position[0] * 1e-3f,
-          robot_state->actual_flange_position[1] * 1e-3f,
-          robot_state->actual_flange_position[2] * 1e-3f;
+    // Eigen::Vector3f pF;
+    // pF << robot_state->actual_flange_position[0] * 1e-3f,
+    //       robot_state->actual_flange_position[1] * 1e-3f,
+    //       robot_state->actual_flange_position[2] * 1e-3f;
 
-    float (*rotm_ptr)[3] = Drfl_.get_current_rotm();
-    Eigen::Quaternionf qF = quatFromRotm(rotm_ptr);
+    // float (*rotm_ptr)[3] = Drfl_.get_current_rotm();
+    // Eigen::Quaternionf qF = quatFromRotm(rotm_ptr);
 
-    Eigen::Isometry3f T_B_F = Eigen::Isometry3f::Identity();
-    T_B_F.linear() = qF.toRotationMatrix();
-    T_B_F.translation() = pF;
+    // Eigen::Isometry3f T_B_F = Eigen::Isometry3f::Identity();
+    // T_B_F.linear() = qF.toRotationMatrix();
+    // T_B_F.translation() = pF;
 
-    Eigen::Isometry3f T_B_TCP = T_B_F * T_flange_tcp;
-    Eigen::Vector3f r_F_to_TCP = T_B_TCP.translation() - T_B_F.translation();
+    // Eigen::Isometry3f T_B_TCP = T_B_F * T_flange_tcp;
+    // Eigen::Vector3f r_F_to_TCP = T_B_TCP.translation() - T_B_F.translation();
 
-    Eigen::Vector3f vF;
-    vF << robot_state->actual_flange_velocity[0] * 1e-3f,
-          robot_state->actual_flange_velocity[1] * 1e-3f,
-          robot_state->actual_flange_velocity[2] * 1e-3f;
+    // Eigen::Vector3f vF;
+    // vF << robot_state->actual_flange_velocity[0] * 1e-3f,
+    //       robot_state->actual_flange_velocity[1] * 1e-3f,
+    //       robot_state->actual_flange_velocity[2] * 1e-3f;
 
-    Eigen::Vector3f wF;
-    wF << robot_state->actual_flange_velocity[3] * DEG2RAD,
-          robot_state->actual_flange_velocity[4] * DEG2RAD,
-          robot_state->actual_flange_velocity[5] * DEG2RAD;
+    // Eigen::Vector3f wF;
+    // wF << robot_state->actual_flange_velocity[3] * DEG2RAD,
+    //       robot_state->actual_flange_velocity[4] * DEG2RAD,
+    //       robot_state->actual_flange_velocity[5] * DEG2RAD;
 
-    if (task_point_mode == TaskPointMode::kTCP) {
-        s.p = T_B_TCP.translation();
-        s.q = Eigen::Quaternionf(T_B_TCP.linear());
-        s.q.normalize();
-        s.v = vF + wF.cross(r_F_to_TCP);
-        s.w = wF;
-    } else {
-        s.p = T_B_F.translation();
-        s.q = qF;
-        s.q.normalize();
-        s.v = vF;
-        s.w = wF;
-    }
+    // if (task_point_mode == TaskPointMode::kTCP) {
+    //     s.p = T_B_TCP.translation();
+    //     s.q = Eigen::Quaternionf(T_B_TCP.linear());
+    //     s.q.normalize();
+    //     s.v = vF + wF.cross(r_F_to_TCP);
+    //     s.w = wF;
+    // } else {
+    //     s.p = T_B_F.translation();
+    //     s.q = qF;
+    //     s.q.normalize();
+    //     s.v = vF;
+    //     s.w = wF;
+    // }
 
-    Eigen::Matrix<float, 6, 6> J_raw = mapMat6(robot_state->jacobian_matrix);
+    // Eigen::Matrix<float, 6, 6> J_raw = mapMat6(robot_state->jacobian_matrix);
 
     // if (kRawJacobianIsFlange) {
     //     if (task_point_mode == TaskPointMode::kTCP) {
@@ -484,539 +460,334 @@ namespace SKKU
     //         s.J = twistShiftMatrix(-r_F_to_TCP) * J_raw;
     //     }
     // }
+    TaskState PBIC::getTaskState(const LPRT_OUTPUT_DATA_LIST robot_state,
+                             TaskPointMode task_point_mode,
+                             const Eigen::Isometry3f& T_flange_tcp)
+{
+    TaskState s;
 
-    // // external_tcp_force는 TCP point, base/world frame, environment-on-robot 가정
-    // Eigen::Matrix<float, 6, 1> wrench_tcp;
+    // ------------------------------------------------------------
+    // Flange pose from robot state (position + RPY)
+    // 현재는 flange 기준 실험이므로 actual_flange_* 를 일관되게 사용
+    // ------------------------------------------------------------
+    Eigen::Vector3f pF;
+    pF << robot_state->actual_flange_position[0] * 1e-3f,
+          robot_state->actual_flange_position[1] * 1e-3f,
+          robot_state->actual_flange_position[2] * 1e-3f;
 
-    if (kRawJacobianIsFlange) {
-        if (task_point_mode == TaskPointMode::kTCP) {
-            s.J = twistShiftMatrix(r_F_to_TCP) * J_raw;
-        } else {
-            s.J = J_raw;
-        }
-    } else {
-        if (task_point_mode == TaskPointMode::kTCP) {
-            s.J = J_raw;
-        } else {
-            s.J = twistShiftMatrix(-r_F_to_TCP) * J_raw;
-        }
+    Eigen::Quaternionf qF =
+        quatFromEulerDeg(robot_state->actual_flange_position[3],
+                         robot_state->actual_flange_position[4],
+                         robot_state->actual_flange_position[5]);
+
+    Eigen::Vector3f vF;
+    vF << robot_state->actual_flange_velocity[0] * 1e-3f,
+          robot_state->actual_flange_velocity[1] * 1e-3f,
+          robot_state->actual_flange_velocity[2] * 1e-3f;
+
+    Eigen::Vector3f wF;
+    wF << robot_state->actual_flange_velocity[3] * DEG2RAD,
+          robot_state->actual_flange_velocity[4] * DEG2RAD,
+          robot_state->actual_flange_velocity[5] * DEG2RAD;
+
+    Eigen::Matrix<float, 6, 6> J_raw = mapMat6(robot_state->jacobian_matrix);
+
+    // 현재는 TCP가 없으므로 controller의 external_tcp_force를 flange wrench로 간주
+    Eigen::Matrix<float, 6, 1> wrench_flange = Eigen::Matrix<float, 6, 1>::Zero();
+    for (int i = 0; i < 6; ++i) {
+        wrench_flange(i) = robot_state->external_tcp_force[i];
     }
 
-    // // ------------------------------------------------------------
-    // // DBIC에서는 actual_flange_velocity 대신 J * qdot 로 task velocity 계산
-    // // actual_flange_velocity가 0으로 들어오는 경우 damping이 죽는 문제를 막기 위함
-    // // ------------------------------------------------------------
-    // Eigen::Matrix<float, 6, 1> qdot_task = mapVec6(robot_state->actual_joint_velocity);
-    // Eigen::Matrix<float, 6, 1> twist_task = s.J * qdot_task;
-    // s.v = twist_task.head<3>();
-    // s.w = twist_task.tail<3>();
+    // ------------------------------------------------------------
+    // flange mode: actual_flange_* 기준으로 끝까지 일관되게 사용
+    // ------------------------------------------------------------
+    if (task_point_mode == TaskPointMode::kFlange) {
+        s.p = pF;
+        s.q = qF;
+        s.q.normalize();
+
+        s.v = vF;
+        s.w = wF;
+
+        s.J = J_raw;
+        s.F_env_on_robot = wrench_flange;
+
+        return s;
+    }
 
     // ------------------------------------------------------------
-    // DBIC는 SI 단위(m, rad, m/s, rad/s)로 계산한다.
-    // actual_joint_velocity는 raw joint unit이므로 rad/s로 변환해서 사용
+    // TCP mode (future use)
+    // flange pose + code-side TCP offset으로 TCP state 구성
     // ------------------------------------------------------------
-    // Eigen::Matrix<float, 6, 1> qdot_task =
-    //     mapJointVelDegToRad(robot_state->actual_joint_velocity);
-    // Eigen::Matrix<float, 6, 1> twist_task = s.J * qdot_task;
-    // s.v = twist_task.head<3>();   // [m/s]
-    // s.w = twist_task.tail<3>();   // [rad/s]    
+    Eigen::Isometry3f T_B_F = Eigen::Isometry3f::Identity();
+    T_B_F.linear() = qF.toRotationMatrix();
+    T_B_F.translation() = pF;
+
+    Eigen::Isometry3f T_B_TCP = T_B_F * T_flange_tcp;
+    Eigen::Vector3f r_F_to_TCP = T_B_TCP.translation() - T_B_F.translation();
+
+    s.p = T_B_TCP.translation();
+    s.q = Eigen::Quaternionf(T_B_TCP.linear());
+    s.q.normalize();
+
+    if (kRawJacobianIsFlange) {
+        s.J = twistShiftMatrix(r_F_to_TCP) * J_raw;
+    } else {
+        s.J = J_raw;
+    }
 
     Eigen::Matrix<float, 6, 1> qdot_task =
         mapJointVelDegToRad(robot_state->actual_joint_velocity);
+
     Eigen::Matrix<float, 6, 1> twist_task = s.J * qdot_task;
     s.v = twist_task.head<3>();
     s.w = twist_task.tail<3>();
 
-    // external_tcp_force는 TCP point, base/world frame, environment-on-robot 가정
-    Eigen::Matrix<float, 6, 1> wrench_tcp;
-
-    for (int i = 0; i < 6; ++i) {
-        wrench_tcp(i) = robot_state->external_tcp_force[i];
-    }
-
-    if (task_point_mode == TaskPointMode::kTCP) {
-        s.F_env_on_robot = wrench_tcp;
-    } else {
-        s.F_env_on_robot.head<3>() = wrench_tcp.head<3>();
-        s.F_env_on_robot.tail<3>() =
-            wrench_tcp.tail<3>() + r_F_to_TCP.cross(wrench_tcp.head<3>());
-    }
+    // flange wrench -> tcp wrench shift
+    s.F_env_on_robot.head<3>() = wrench_flange.head<3>();
+    s.F_env_on_robot.tail<3>() =
+        wrench_flange.tail<3>() - r_F_to_TCP.cross(wrench_flange.head<3>());
 
     return s;
-    }
-    
-    Torques PBIC::ControlGeneratorDBIC(const TaskRef& ref,
-                                   const LPRT_OUTPUT_DATA_LIST robot_state,
-                                   TaskPointMode task_point_mode,
-                                   const Eigen::Isometry3f& T_flange_tcp) {
-    Torques torque = Torques();
+}
 
-    TaskState s = getTaskState(robot_state, task_point_mode, T_flange_tcp);
+    // // ------------------------------------------------------------
+    // // DBIC는 SI 단위(m, rad, m/s, rad/s)로 계산한다.
+    // // actual_joint_velocity는 raw joint unit이므로 rad/s로 변환해서 사용
+    // // ------------------------------------------------------------
+    //     Eigen::Matrix<float, 6, 1> qdot_task =
+    //     mapJointVelDegToRad(robot_state->actual_joint_velocity);
 
-    Eigen::Matrix<float, 6, 6> Hhat = mapMat6(robot_state->mass_matrix);
-    Eigen::Matrix<float, 6, 6> Cmat = mapMat6(robot_state->coriolis_matrix);
-    Eigen::Matrix<float, 6, 1> g    = mapVec6(robot_state->gravity_torque);
-    // Eigen::Matrix<float, 6, 1> qdot = mapVec6(robot_state->actual_joint_velocity);
-    Eigen::Matrix<float, 6, 1> qdot =
-        mapJointVelDegToRad(robot_state->actual_joint_velocity);
+    // Eigen::Matrix<float, 6, 1> twist_task = s.J * qdot_task;
 
-    // 논문 convention:
-    // Fe = robot-on-environment
-    // measured wrench는 보통 environment-on-robot 이므로 부호 반전
-    // // static Eigen::Matrix<float, 6, 1> Fe_filt = Eigen::Matrix<float, 6, 1>::Zero();
-    // Eigen::Matrix<float, 6, 1> Fe_paper = -s.F_env_on_robot;
-    // Fe_filt = 0.1f * Fe_paper + 0.9f * Fe_filt;
-    // Fe_paper = Fe_filt;
-    // Eigen::Matrix<float, 6, 1> Fe_paper = -s.F_env_on_robot;
-    // Fe_filt_dbic_ = 0.1f * Fe_paper + 0.9f * Fe_filt_dbic_;
-    // Fe_paper = Fe_filt_dbic_;
+    // s.v = twist_task.head<3>();   // [m/s]
+    // s.w = twist_task.tail<3>();   // [rad/s]
 
-    // ------------------------------------------------------------
-    // Safety-first DBIC:
-    // free-space goal reaching에서는 외력 coupling을 일단 끈다.
-    // 손으로 아래로 당길 때 로봇이 그 방향으로 가속하는 문제를 막기 위함
-    // ------------------------------------------------------------
-    const bool kUseExternalWrenchInDBIC = false;
-
-    Eigen::Matrix<float, 6, 1> Fe_paper = Eigen::Matrix<float, 6, 1>::Zero();
-
-    if (kUseExternalWrenchInDBIC) {
-        Eigen::Matrix<float, 6, 1> Fe_meas = -s.F_env_on_robot;
-
-        auto apply_deadband = [](float v, float th) {
-            return (std::abs(v) < th) ? 0.0f : v;
-        };
-        auto clamp_abs = [](float v, float lim) {
-            if (v > lim) return lim;
-            if (v < -lim) return -lim;
-            return v;
-        };
-
-        // translational force deadband / clamp
-        for (int i = 0; i < 3; ++i) {
-            Fe_meas(i) = apply_deadband(Fe_meas(i), 5.0f);   // 5 N 이하 무시
-            Fe_meas(i) = clamp_abs(Fe_meas(i), 20.0f);       // 최대 ±20 N
-        }
-
-        // rotational moment deadband / clamp
-        for (int i = 3; i < 6; ++i) {
-            Fe_meas(i) = apply_deadband(Fe_meas(i), 0.5f);   // 0.5 Nm 이하 무시
-            Fe_meas(i) = clamp_abs(Fe_meas(i), 2.0f);        // 최대 ±2 Nm
-        }
-
-        Fe_filt_dbic_ = 0.1f * Fe_meas + 0.9f * Fe_filt_dbic_;
-        Fe_paper = Fe_filt_dbic_;
-    } else {
-        Fe_filt_dbic_.setZero();
-    }
-
-    Eigen::Matrix<float, 6, 1> e    = Eigen::Matrix<float, 6, 1>::Zero();
-    Eigen::Matrix<float, 6, 1> edot = Eigen::Matrix<float, 6, 1>::Zero();
-
-    e.head<3>()    = ref.p_d - s.p;
-    edot.head<3>() = ref.v_d - s.v;
-
-    e.tail<3>()    = quatLogError(ref.q_d, s.q);
-    edot.tail<3>() = ref.w_d - s.w;
-
-    Eigen::Matrix<float, 6, 1> xdd_d = Eigen::Matrix<float, 6, 1>::Zero();
-    xdd_d.head<3>() = ref.a_d;
-    xdd_d.tail<3>() = ref.alpha_d;
-
-    // // [TEMP DEBUG]
-    // // 먼저 orientation을 잠깐 끄고 XYZ translation만 살아나는지 확인한다.
-    // e.tail<3>().setZero();
-    // edot.tail<3>().setZero();
-    // xdd_d.tail<3>().setZero();
-
-    // ud = xdd_d + Md^-1 (Bd*edot + Kd*e - Fe)
-    Eigen::Matrix<float, 6, 1> u_d =
-        xdd_d + Md_inv_ * (Bd_ * edot + Kd_ * e - Fe_paper);
-
-    // Eigen::Matrix<float, 6, 1> Jdot_qdot = Eigen::Matrix<float, 6, 1>::Zero();
-    // if (has_prev_J_dbic_) {
-    //     Eigen::Matrix<float, 6, 6> Jdot = (s.J - J_prev_dbic_) / dt;
-    //     Jdot_qdot = 0.1f * (Jdot * qdot) + 0.9f * Jdot_qdot_prev_;
-    //     Jdot_qdot_prev_ = Jdot_qdot;
-    // }
-    // J_prev_dbic_ = s.J;
-    // has_prev_J_dbic_ = true;
-
-    // Eigen::Matrix<float, 6, 6> J_pinv = dampedPseudoInverse(s.J, 1e-4f);
-    // Eigen::Matrix<float, 6, 1> Nhat = Cmat * qdot + g;
-
-    // Eigen::Matrix<float, 6, 1> tau =
-    //     Hhat * J_pinv * (u_d - Jdot_qdot)
-    //     + Nhat
-    //     + s.J.transpose() * Fe_paper;
-
-    // static int dbg_count = 0;
-    // if ((dbg_count++ % 100) == 0) {
-    //     std::cout << "[DBIC DBG] e_xyz(mm): "
-    //               << (1000.0f * e.head<3>()).transpose()
-    //               << " | e_rot(rad): " << e.tail<3>().transpose()
-    //               << " | tau: " << tau.transpose() << std::endl;
-    // }
-
-    // Eigen::Matrix<float, 6, 1> Fspring = Kd_ * e;
-    // Eigen::Matrix<float, 6, 1> Fdamp   = Bd_ * edot;
-    // Eigen::Matrix<float, 6, 1> Fdbic   = Fspring + Fdamp - Fe_paper;
+    // // controller에서 tool offset이 비활성이라면 external_tcp_force는 사실상 flange wrench로 본다.
+    // Eigen::Matrix<float, 6, 1> wrench_flange = Eigen::Matrix<float, 6, 1>::Zero();
 
     // for (int i = 0; i < 6; ++i) {
-    //     F.F_DBIC[i] = Fdbic(i);
-    //     F.F_rest[i] = Fspring(i);
-    //     F.F_coriolis[i] = Fdamp(i);
-    //     F.Fext[i] = s.F_env_on_robot(i);   // log는 measured wrench 기준
-    //     F.Fimp[i] = 0.0f;                  // DBIC에서는 별도 impedance model이 없음
-
-    //     if (tau(i) > torque_limit[i]) {
-    //         tau(i) = torque_limit[i];
-    //     } else if (tau(i) < -torque_limit[i]) {
-    //         tau(i) = -torque_limit[i];
-    //     }
-
-    //     torque.tau_d[i] = tau(i);
+    //     wrench_flange(i) = robot_state->external_tcp_force[i];
     // }
 
-    auto clampf = [](float v, float lo, float hi) {
-        return (v < lo) ? lo : ((v > hi) ? hi : v);
-    };
+    // if (task_point_mode == TaskPointMode::kTCP) {
+    //     // wrench at TCP = wrench at flange shifted to TCP
+    //     s.F_env_on_robot.head<3>() = wrench_flange.head<3>();
+    //     s.F_env_on_robot.tail<3>() =
+    //         wrench_flange.tail<3>() - r_F_to_TCP.cross(wrench_flange.head<3>());
+    // } else {
+    //     s.F_env_on_robot = wrench_flange;
+    // }
 
-    Eigen::Matrix<float, 6, 1> Jdot_qdot = Eigen::Matrix<float, 6, 1>::Zero();
-    if (has_prev_J_dbic_) {
-        Eigen::Matrix<float, 6, 6> Jdot = (s.J - J_prev_dbic_) / dt;
-        Jdot_qdot = 0.1f * (Jdot * qdot) + 0.9f * Jdot_qdot_prev_;
-        Jdot_qdot_prev_ = Jdot_qdot;
-    }
-    J_prev_dbic_ = s.J;
-    has_prev_J_dbic_ = true;
-
-    // Jdot*qdot 순간 피크 제한
-    for (int i = 0; i < 3; ++i) {
-        Jdot_qdot(i) = clampf(Jdot_qdot(i), -1.0f, 1.0f);   // m/s^2
-    }
-    for (int i = 3; i < 6; ++i) {
-        Jdot_qdot(i) = clampf(Jdot_qdot(i), -2.0f, 2.0f);   // rad/s^2
-    }
-
-    // 기존 1e-4는 실기에서 너무 공격적이다.
-    // 우선 damping을 크게 줘서 near-singularity에서 토크 폭주를 막는다.
-    Eigen::Matrix<float, 6, 6> J_pinv = dampedPseudoInverse(s.J, 5e-2f);
-    Eigen::Matrix<float, 6, 1> Nhat = Cmat * qdot + g;
-
-    Eigen::Matrix<float, 6, 1> task_cmd = u_d - Jdot_qdot;
-
-    // Cartesian acceleration command clamp
-    for (int i = 0; i < 3; ++i) {
-        task_cmd(i) = clampf(task_cmd(i), -0.8f, 0.8f);   // m/s^2
-    }
-    for (int i = 3; i < 6; ++i) {
-        task_cmd(i) = clampf(task_cmd(i), -1.0f, 1.0f);   // rad/s^2
-    }
-
-    Eigen::Matrix<float, 6, 1> tau =
-        Hhat * J_pinv * task_cmd
-        + Nhat
-        + s.J.transpose() * Fe_paper;
-
-    Eigen::Matrix<float, 6, 1> Fspring = Kd_ * e;
-    Eigen::Matrix<float, 6, 1> Fdamp   = Bd_ * edot;
-    Eigen::Matrix<float, 6, 1> Fdbic   = Fspring + Fdamp - Fe_paper;
-
-    // 100 Hz 기준 토크 변화율 제한
-    const std::array<float, 6> tau_rate_limit_per_sec = {
-        800.0f, 800.0f, 600.0f, 200.0f, 200.0f, 200.0f
-    };
-
-    for (int i = 0; i < 6; ++i) {
-        F.F_DBIC[i] = Fdbic(i);
-        F.F_rest[i] = Fspring(i);
-        F.F_coriolis[i] = Fdamp(i);
-        F.Fext[i] = s.F_env_on_robot(i);
-        F.Fimp[i] = 0.0f;
-
-        // slew-rate limit
-        const float max_delta = tau_rate_limit_per_sec[i] * dt;
-        tau(i) = clampf(tau(i),
-                        tau_prev_dbic_(i) - max_delta,
-                        tau_prev_dbic_(i) + max_delta);
-
-        // absolute torque limit
-        tau(i) = clampf(tau(i), -torque_limit[i], torque_limit[i]);
-
-        torque.tau_d[i] = tau(i);
-        tau_prev_dbic_(i) = tau(i);
-    }
-
-    static int dbg_count_cmd = 0;
-    if ((dbg_count_cmd++ % 100) == 0) {
-        std::cout << "[DBIC CMD] tau_cmd: " << tau.transpose() << std::endl;
-    }
-
-    static int dbg_count_state = 0;
-    if ((dbg_count_state++ % 100) == 0) {
-        std::cout << "[DBIC ERR] e_xyz(mm): "
-                  << (1000.0f * e.head<3>()).transpose()
-                  << " | edot_xyz(m/s): " << edot.head<3>().transpose()
-                  << " | e_rot(rad): " << e.tail<3>().transpose()
-                  << " | tau_cmd: " << tau.transpose()
-                  << std::endl;
-    }
-
-    return torque;
-    }
-    //
+    // return s;
+    // }
     
-    Torques PBIC::ControlGenerator(Trajectory &trajectory, const Desired desired, const LPRT_OUTPUT_DATA_LIST robot_state, Errors &error, int count)
-    {   
+    Torques PBIC::ControlGeneratorDBIC(const TaskRef& ref,
+                                    const LPRT_OUTPUT_DATA_LIST robot_state,
+                                    TaskPointMode task_point_mode,
+                                    const Eigen::Isometry3f& T_flange_tcp)
+    {
+        Torques torque = Torques();
+
+        TaskState s = getTaskState(robot_state, task_point_mode, T_flange_tcp);
+
+        Eigen::Matrix<float, 6, 6> Hhat = mapMat6(robot_state->mass_matrix);
+        Eigen::Matrix<float, 6, 6> Cmat = mapMat6(robot_state->coriolis_matrix);
+        Eigen::Matrix<float, 6, 1> g    = mapVec6(robot_state->gravity_torque);
+        Eigen::Matrix<float, 6, 1> qdot =
+            mapJointVelDegToRad(robot_state->actual_joint_velocity);
+
+        // ------------------------------------------------------------
+        // Force measurement conditioning
+        // paper에서는 calibrated force sensor를 사용하지만,
+        // 현재 시스템은 raw external_tcp_force를 바로 쓰므로
+        // bias 제거 + LPF를 적용해서 free-space jitter를 줄인다.
+        // ------------------------------------------------------------
+        Eigen::Matrix<float, 6, 1> Fe_meas = -s.F_env_on_robot;
+        Eigen::Matrix<float, 6, 1> Fe_paper = Eigen::Matrix<float, 6, 1>::Zero();
+
+        if (!fe_bias_ready_dbic_) {
+            Fe_bias_accum_dbic_ += Fe_meas;
+            Fe_bias_count_dbic_++;
+
+            if (Fe_bias_count_dbic_ >= 50) {   // 약 0.2초 @ 250Hz
+                Fe_bias_dbic_ = Fe_bias_accum_dbic_ / static_cast<float>(Fe_bias_count_dbic_);
+                fe_bias_ready_dbic_ = true;
+                Fe_filt_dbic_.setZero();
+            }
+        } else {
+            Fe_meas -= Fe_bias_dbic_;
+            Fe_filt_dbic_ = 0.05f * Fe_meas + 0.95f * Fe_filt_dbic_;
+            Fe_paper = Fe_filt_dbic_;
+
+            // 외력 = 0 experiment setting
+            // Fe_paper = Eigen::Matrix<float, 6, 1>::Zero();
+        }
+
+        Eigen::Matrix<float, 6, 1> e    = Eigen::Matrix<float, 6, 1>::Zero();
+        Eigen::Matrix<float, 6, 1> edot = Eigen::Matrix<float, 6, 1>::Zero();
+
+        e.head<3>()    = ref.p_d - s.p;
+        edot.head<3>() = ref.v_d - s.v;
+
+        e.tail<3>()    = quatLogError(ref.q_d, s.q);
+        edot.tail<3>() = ref.w_d - s.w;
+
+        Eigen::Matrix<float, 6, 1> xdd_d = Eigen::Matrix<float, 6, 1>::Zero();
+        xdd_d.head<3>() = ref.a_d;
+        xdd_d.tail<3>() = ref.alpha_d;
+
+        // DB-IC core
+        Eigen::Matrix<float, 6, 1> u_d =
+            xdd_d + Md_inv_ * (Bd_ * edot + Kd_ * e - Fe_paper);
+
+        // ------------------------------------------------------------
+        // Jdot*qdot는 raw finite difference를 그대로 쓰면 매우 noisy하므로
+        // 저역통과 형태로 한 번 smoothing 한다.
+        // ------------------------------------------------------------
+        Eigen::Matrix<float, 6, 1> Jdot_qdot = Eigen::Matrix<float, 6, 1>::Zero();
+        if (has_prev_J_dbic_) {
+            Eigen::Matrix<float, 6, 6> Jdot = (s.J - J_prev_dbic_) / dt;
+            Eigen::Matrix<float, 6, 1> Jdot_qdot_raw = Jdot * qdot;
+            Jdot_qdot = 0.1f * Jdot_qdot_raw + 0.9f * Jdot_qdot_prev_;
+            Jdot_qdot_prev_ = Jdot_qdot;
+        } else {
+            Jdot_qdot_prev_.setZero();
+        }
+
+        J_prev_dbic_ = s.J;
+        has_prev_J_dbic_ = true;
+
+        // ------------------------------------------------------------
+        // exact inverse / damped inverse를 분기하면 joint-space 해가 튄다.
+        // 항상 같은 형태의 damped pseudo inverse를 써서 joint coordination을 부드럽게 만든다.
+        // ------------------------------------------------------------
+        Eigen::Matrix<float, 6, 6> J_inv = dampedPseudoInverse(s.J, 5e-3f);
+
+        Eigen::Matrix<float, 6, 1> Nhat = Cmat * qdot + g;
+
+        Eigen::Matrix<float, 6, 1> tau =
+            Hhat * J_inv * (u_d - Jdot_qdot)
+            + Nhat
+            + s.J.transpose() * Fe_paper;
+
+        Eigen::Matrix<float, 6, 1> Fspring = Kd_ * e;
+        Eigen::Matrix<float, 6, 1> Fdamp   = Bd_ * edot;
+        Eigen::Matrix<float, 6, 1> Fdbic   = Fspring + Fdamp - Fe_paper;
+
+        auto clampf = [](float v, float lo, float hi) {
+            return (v < lo) ? lo : ((v > hi) ? hi : v);
+        };
+
+        // safety wrapper
+        const std::array<float, 6> tau_rate_limit_per_sec = {
+            1500.0f, 1500.0f, 1200.0f, 250.0f, 250.0f, 250.0f
+        };
+
+        for (int i = 0; i < 6; ++i) {
+            F.F_DBIC[i] = Fdbic(i);
+            F.F_rest[i] = Fspring(i);
+            F.F_coriolis[i] = Fdamp(i);
+            F.Fext[i] = s.F_env_on_robot(i);
+            F.Fimp[i] = 0.0f;
+
+            const float max_delta = tau_rate_limit_per_sec[i] * dt;
+            tau(i) = clampf(tau(i),
+                            tau_prev_dbic_(i) - max_delta,
+                            tau_prev_dbic_(i) + max_delta);
+
+            tau(i) = clampf(tau(i), -torque_limit[i], torque_limit[i]);
+
+            torque.tau_d[i] = tau(i);
+            tau_prev_dbic_(i) = tau(i);
+        }
+
+        return torque;
+    }    
+    
+    Torques PBIC::ControlGenerator(Trajectory &trajectory,
+                                const Desired desired,
+                                const LPRT_OUTPUT_DATA_LIST robot_state,
+                                Errors &error,
+                                int count)
+    {
+        // 이 함수는 PBIC-TDC inner loop 전용이다.
+        // trajectory의 Cartesian 정보는 outer loop(MotionGenerator)에서 이미 joint target으로 바뀌었으므로
+        // 여기서는 직접 사용하지 않는다.
+        (void)trajectory;
+
         std::array<float, 6> err = {0, };
         std::array<float, 6> derr = {0, };
         std::array<float, 6> err_integral = {0, };
-        Eigen::Matrix<float, 6, 1> trq_DBIC, F_DBIC, trq_PBIC, F_rest, F_coriolis;
-        Eigen::Matrix<float, 6, 1> qdot_prev, q2dot;
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> derrPrev(prev.derrPrev.data());
-        Torques torque = Torques();
-        float joint[6] = {0,};
-        float trq_gravity[6] = {0, };
-        float joint_velocity[6] = {0, };
-        float joint_acceleration[6] = {0, };
-        float filtered_joint_acceleration[6] = {0, };
-        float massMatrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT] = {{0,}};
-        float coriolisMatrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT] = {{0,}};
-        float jacobianMatrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT] = {{0,}};
-        float jacobianDotMatrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT] = {{0,}};
-        float alpha = 0.1;
-    
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> trq_ext(robot_state->external_joint_torque);
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> trq_g(robot_state->gravity_torque);
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> x(robot_state->actual_flange_position);
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> xdot(robot_state->actual_flange_velocity);
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> q(robot_state->actual_joint_position);
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> qdot(robot_state->actual_joint_velocity);
-        // Eigen::Map<Eigen::Matrix<float, 7, 1>> x0(trajectory.pos_d.data());
-        // Eigen::Map<Eigen::Matrix<float, 6, 1>> x0Dot(trajectory.vel_d.data());
-        // Eigen::Map<Eigen::Matrix<float, 6, 1>> x02Dot(trajectory.acc_d.data());
 
-        Eigen::Map<Eigen::Matrix<float, 7, 1>> x0(trajectory.pos_d.data());
-        // Eigen::Map<Eigen::Matrix<float, 7, 1>> x0Dot(trajectory.vel_d.data());
-        // Eigen::Map<Eigen::Matrix<float, 7, 1>> x02Dot(trajectory.acc_d.data());
+        Eigen::Map<Eigen::Matrix<float, 6, 1>> derrPrev(prev.derrPrev.data());
+
+        Torques torque = Torques();
+
+        float joint[6] = {0,};
+        float trq_gravity[6] = {0,};
 
         memcpy(joint, robot_state->actual_joint_position, sizeof(float) * 6);
-        memcpy(joint_velocity, robot_state->actual_joint_velocity, sizeof(float) * 6);
         memcpy(trq_gravity, robot_state->gravity_torque, sizeof(float) * 6);
-        memcpy(jacobianMatrix, robot_state->jacobian_matrix, NUMBER_OF_JOINT * NUMBER_OF_JOINT * sizeof(float));
-        memcpy(massMatrix, robot_state->mass_matrix, NUMBER_OF_JOINT * NUMBER_OF_JOINT * sizeof(float));
-        memcpy(coriolisMatrix, robot_state->coriolis_matrix, NUMBER_OF_JOINT * NUMBER_OF_JOINT * sizeof(float));
-        std::array<float, 6> torque_limits = {519.0, 519.0, 244.5, 75.0, 75.0, 75.0}; 
-        Eigen::Matrix<float, 6, 6> J, JPrev, JDot, JDot_f, C, Mass,MassPrev, P_PB, D_PB,MassxJinverse;
-        Eigen::Matrix<float, 6, 1> qdDot, qdPrev, qd, trq_record, trq_record2,Coriolis,Jxqdot, Stiffness, Damping, MassTerm, qerr,qerrDot,qerrPrev, trq_stat;
 
-        for (int i = 0; i < NUMBER_OF_JOINT; ++i) {
-            for (int j = 0; j < NUMBER_OF_JOINT; ++j) {
-                J(i,j) = jacobianMatrix[i][j];
-                C(i,j) = coriolisMatrix[i][j];
-                Mass(i,j) = massMatrix[i][j];
-            }
-        }
+        const std::array<float, 6> torque_limits = {519.0f, 519.0f, 244.5f, 75.0f, 75.0f, 75.0f};
 
-
-        trq_gg = J.transpose()*F_estim; // Gripper compensation term
-
-        // 1. P_DBIC (Cartesian Stiffness: N/m, Nm/rad)
-        // 위치(X, Y, Z)는 약 400~600, 자세(R, P, Y)는 20~40 정도로 시작하는 것이 안전합니다.
-        Eigen::Matrix<float, 6, 1> P_DBIC;
-        // P_DBIC << 40.0f,40.0f, 40.0f,  // 위치 강성 (X, Y, Z)
-        //         1.0f,  1.0f,  0.0f;   // 자세 강성 (R, P, Y)
-
-        
-        // P_DBIC << 10.0f,10.0f, 10.0f,  // 위치 강성 (X, Y, Z)
-        //         5.0f,  5.0f,  5.0f;   // 자세 강성 (R, P, Y)
-
-        P_DBIC << 10.0f,10.0f, 10.0f,  // 위치 강성 (X, Y, Z)
-        6.0f,  6.0f,  6.0f;   // 자세 강성 (R, P, Y )
-
-        // 2. D_DBIC (Cartesian Damping: Ns/m, Nms/rad)s
-        // 댐핑은 임계 댐핑(Critical Damping) 조건인 D = 2 * sqrt(K * M)을 고려해야 합니다.
-        // M1013의 유효 질량을 고려했을 때 아래 값이 적절합니다.
-        Eigen::Matrix<float, 6, 1> D_DBIC;
-        // D_DBIC << 5.0f,  5.0f,  5.0f,   // 위치 댐핑
-        //         0.1f,   0.1f,   0.0f;    // 자세 댐핑
-
-        // D_DBIC << 1.0f,  1.0f,  1.0f,   // 위치 댐핑
-        //         0.0f,   0.0f,   0.0f;    // 자세 댐핑
-
-        D_DBIC << 1.0f,  1.0f,  1.0f,   // 위치 댐핑
-        0.0f,   0.0f,   0.0f;    // 자세 댐핑
-                
-        // qerr = qd-q;
-        Coriolis = C*qdot; 
-
-
-        // // 1. 현재 로봇의 자세를 쿼터니언으로 변환 (실제 로봇 피드백 x는 여전히 RPY/deg 기준일 때)
-        // Eigen::AngleAxisf rollAngle(x(3) * M_PI / 180.0f, Eigen::Vector3f::UnitX());
-        // Eigen::AngleAxisf pitchAngle(x(4) * M_PI / 180.0f, Eigen::Vector3f::UnitY());
-        // Eigen::AngleAxisf yawAngle(x(5) * M_PI / 180.0f, Eigen::Vector3f::UnitZ());
-        // Eigen::Quaternionf q_actual = yawAngle * pitchAngle * rollAngle;
-
-        // // 2. [수정] 목표 자세를 x0(3~6)에서 직접 쿼터니언으로 생성
-        // // Eigen::Quaternionf constructor 순서는 (w, x, y, z)입니다.
-        // // x0 mapping: 3=x, 4=y, 5=z, 6=w (TrajectoryGen::init에서 보낸 순서)
-        // Eigen::Quaternionf q_desired(x0(6), x0(3), x0(4), x0(5));
-        // q_desired.normalize(); // 수치적 안정성을 위해 정규화 수행
-
-        // // 3. 쿼터니언 오차 계산
-        // Eigen::Matrix<float, 6, 1> error_x;
-        // error_x.head(3) = x0.head(3) - x.head(3); // 위치 오차 (X, Y, Z)
-
-        // // [중요] Antipodal 보정 (최단 경로 선택)
-        // if (q_desired.coeffs().dot(q_actual.coeffs()) < 0.0f) {
-        //     q_actual.coeffs() *= -1.0f; 
-        // }
-
-        // // 쿼터니언 기반 오차 벡터 추출 (Vector-based Orientation Error)
-        // // q_error = q_actual^-1 * q_desired
-        // Eigen::Quaternionf q_error(q_actual.inverse() * q_desired);
-        
-        // // Franka Control 등에서 사용하는 표준 오차 벡터 방식 적용
-        // // 이 방식이 Roll/Pitch/Yaw보다 훨씬 안정적인 제어를 보장합니다.
-        // error_x.tail(3) << 2.0f * (q_actual * q_error.vec());
-
-        // 1. 현재 로봇 자세(RPY/deg) -> quaternion
-        Eigen::Quaternionf q_actual = quatFromEulerDeg(x(3), x(4), x(5));
-
-        // 2. 목표 자세(quaternion trajectory)
-        Eigen::Quaternionf q_desired =
-            normalizeQuat(Eigen::Quaternionf(x0(6), x0(3), x0(4), x0(5)));
-
-        // 3. 최단 경로 hemisphere 정렬
-        alignQuatHemisphere(q_actual, q_desired);
-
-        // 4. 위치 + 자세 오차 계산
-        Eigen::Matrix<float, 6, 1> error_x;
-        error_x.head(3) = x0.head(3) - x.head(3);
-
-        Eigen::Quaternionf q_error = normalizeQuat(q_actual.inverse() * q_desired);
-        error_x.tail(3) = 2.0f * (q_actual * q_error.vec());
-
-        // 4. 오차 미분 및 필터링 (LPF 적용)
-        Eigen::Matrix<float, 6, 1> derr_x;
-        static Eigen::Matrix<float, 6, 1> error_x_prev = error_x;
-        static Eigen::Matrix<float, 6, 1> derr_x_filtered = Eigen::Matrix<float, 6, 1>::Zero();
-
-        // 실험 시작 시 초기화 (Folder 1416 튀는 문제 해결)
-        if (count == 0) {
-            error_x_prev = error_x;
-            derr_x_filtered.setZero();  
-        }
-
-        derr_x = (error_x - error_x_prev) / dt;
-        float alpha_filter = 0.15f; 
-        derr_x_filtered = alpha_filter * derr_x + (1.0f - alpha_filter) * derr_x_filtered;
-        error_x_prev = error_x;
-
-        // 5. Task Force 및 최종 토크 계산 (그리퍼 보상 포함)
-        Eigen::Matrix<float, 6, 1> F_task;
-        for(int i = 0; i < 6; i++) {
-            F_task(i) = P_DBIC(i) * error_x(i) + D_DBIC(i) * derr_x_filtered(i);
-        }
-
-        //확인을 위해 잠시 주석처리
-        F_task += F_ext; // 외력 보상
-        Eigen::Matrix<float, 6, 1> tau_task = J.transpose() * F_task;
-
-        // // 7. Nullspace 제어 (로봇의 자세 유지 - Franka 코드의 필수 요소)
-        // // 6-DOF라도 특이점 근처나 관절 한계 근처에서 안정성을 위해 사용
-        // Eigen::Matrix<float, 6, 1> tau_nullspace;
-        // Eigen::Matrix<float, 6, 6> I = Eigen::Matrix<float, 6, 6>::Identity();
-        // Eigen::Matrix<float, 6, 6> J_inv = J.inverse(); // Pseudo-inverse 권장
-        
-        // // 관절 강성(k_null)을 아주 작게 주어 현재 자세를 유지하려 함
-        // float k_null = 0.5; 
-        // tau_nullspace = (I - J.transpose() * J_inv.transpose()) * (k_null * (q - q)); // q_d 대신 현재 q 유지
-
-        // for(int i=3; i<6; i++) error_x(i) = x_d(i) - x(i);
-
-        trq_DBIC = tau_task + Coriolis + trq_g;
-        // trq_DBIC = trq_g;
-        
-        
-        for (int i = 0; i < 6; i++)
-        {   
+        for (int i = 0; i < 6; ++i)
+        {
             err[i] = desired.q_d[i] - joint[i];
 
+            // joint6 초기 branch jump 완화용 기존 로직 유지
             if (i == 5 && count <= 500) {
                 float scaling_factor = static_cast<float>(count) / 500.0f;
-                // std::cout << "Scaling factor: " << scaling_factor << std::endl;
                 err[5] *= scaling_factor;
             }
-        
-            if (err[i] >= 350.0) {
-                err[i] -= 360.0;
-            } else if (err[i] <= -350.0) {
-                err[i] += 360.0;
+
+            // angle wrap
+            if (err[i] >= 350.0f) {
+                err[i] -= 360.0f;
+            } else if (err[i] <= -350.0f) {
+                err[i] += 360.0f;
             }
-     
-            derr[i] = 0.1 * ((err[i] - error.e[i]) / dt) + 0.9 * derrPrev[i]; 
+
+            // derivative LPF
+            derr[i] = 0.1f * ((err[i] - error.e[i]) / dt) + 0.9f * derrPrev(i);
+
+            // integral
             err_integral[i] = error.e_integral[i] + err[i] * dt;
-    
-            //PBIC w/ TDC-based PID controller
-            // torque.tau_d[i] = M_hat_inv[i] * K1[i] / dt * (err[i] + K1_inv[i] * derr[i] + K1[i] * K2_inv[i] * err_integral[i])+trq_gravity[i]-trq_gg[i]; // w/ Gripper
-            // torque.tau_d[i] = M_hat_inv[i] * K1[i] / dt * (err[i] + K1_inv[i] * derr[i] + K1[i] * K2_inv[i] * err_integral[i]) + trq_gravity[i]; // w/o Gripper
-            
-            //DBIC 
-            //torque.tau_d[i] = trq_DBIC[i];
-            //new0317
-            // PBIC-TDC inner loop
+
+            // ------------------------------------------------------------------
+            // PBIC-TDC inner loop only
+            // DBIC torque generation은 ControlGeneratorDBIC()에서만 수행한다.
+            // 여기서는 PBIC outer loop(MotionGenerator)가 만든 desired.q_d를
+            // joint-space TDC/PID 로 추종한다.
+            // ------------------------------------------------------------------
             torque.tau_d[i] =
                 M_hat_inv[i] * K1[i] / dt *
                 (err[i] + K1_inv[i] * derr[i] + K1[i] * K2_inv[i] * err_integral[i])
                 + trq_gravity[i];
 
-            // gripper 보정까지 넣고 싶으면 아래로 바꿔
-            // torque.tau_d[i] =
-            //     M_hat_inv[i] * K1[i] / dt *
-            //     (err[i] + K1_inv[i] * derr[i] + K1[i] * K2_inv[i] * err_integral[i])
-            //     + trq_gravity[i] - trq_gg[i];            
-
-            //PBIC
-            // torque.tau_d[i] = trq_PBIC[i];
-
-            // Static
-            // torque.tau_d[i] = trq_stat[i];
-
-
-            // torque saturation 
+            // torque saturation
             if (torque.tau_d[i] > torque_limits[i]) {
                 torque.tau_d[i] = torque_limits[i];
             } else if (torque.tau_d[i] < -torque_limits[i]) {
                 torque.tau_d[i] = -torque_limits[i];
             }
-    
+
+            // 다음 스텝 derivative filter용 저장
+            derrPrev(i) = derr[i];
         }
 
         error.e = err;
         error.de = derr;
         error.e_integral = err_integral;
-        JPrev = J;
-        MassPrev = Mass;
-        qdot_prev = qdot;
-        qdPrev = qd;
-        qerrPrev = qerr;
-        // Control Input
 
-        static int dbg_count_pbic = 0;
-        if ((dbg_count_pbic++ % 100) == 0) {
-            Eigen::Map<const Eigen::Matrix<float, 6, 1>> err_vec(err.data());
-            Eigen::Map<const Eigen::Matrix<float, 6, 1>> derr_vec(derr.data());
-
-            std::cout << "[PBIC ERR] e_joint(deg): " << err_vec.transpose()
-                    << " | de_joint(deg/s): " << derr_vec.transpose()
-                    << std::endl;
-        }
-        
         return torque;
     }
 
+    // NOTE:
+    // 이 함수는 PBIC outer loop용 IK target generator이다.
+    // 현재 DBIC goal/path 실험에서는 ControlGeneratorDBIC() 경로를 사용하므로
+    // 여기의 Euler dummy orientation은 현재 DBIC photo issue의 직접 원인이 아니다.
     std::pair<std::array<float, 6>, bool> PBIC::MotionGenerator(Trajectory &trajectory, const LPRT_OUTPUT_DATA_LIST robot_state, Prev &prev, Impedance &imp, int sol_space, bool correction_flag,int operator_call_count_)
     {
         static int singularity_counter = 0;
@@ -1190,117 +961,15 @@ namespace SKKU
         float x_d2[6] = {0,};
         
         Eigen::VectorXf::Map(&x_d[0], 6) = imp.pos_m; // Impedance mode
-        
-        // // to check the SAFE CASES
-        // x_d[3] = trajectory.pos_d[3];
-        // x_d[4] = trajectory.pos_d[4];
-        // x_d[5] = trajectory.pos_d[5];
+    
 
-        // orientation은 dummy Euler trajectory 기준으로 유지
+        // trajectory는 이미 fillEulerDummyForIK()를 거쳐
+        // quaternion -> continuous Euler dummy 로 변환된 상태다.
+        // 따라서 여기의 pos_euler(3..5)는 raw quaternion이 아니라
+        // [roll, pitch, yaw] [deg] 값이다.
         x_d[3] = pos_euler(3);
         x_d[4] = pos_euler(4);
         x_d[5] = pos_euler(5);
-
-        // float current_joint[NUMBER_OF_JOINT] = {0,};
-        // memcpy(current_joint, robot_state->actual_joint_position, sizeof(float) * 6);
-
-        // // LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(x_d, 2, COORDINATE_SYSTEM_WORLD, 1);
-        // // std::copy(res->_fTargetPos, res->_fTargetPos + 6, begin(des));
-
-        // LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(x_d, 2, COORDINATE_SYSTEM_WORLD, 1);
-        // // LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(x_d, sol_space, COORDINATE_SYSTEM_WORLD, 1);
-
-        // if (res == nullptr) {
-        //     ROS_WARN("MotionGenerator: IK failed. Holding current joint command.");
-
-        //     std::copy(robot_state->actual_joint_position,
-        //             robot_state->actual_joint_position + 6,
-        //             begin(des));
-
-        //     singularity_counter++;
-        //     if (singularity_counter >= 10) {
-        //         is_singular = true;
-        //     }
-
-        //     return {des, is_singular};
-        // }
-
-        // std::copy(res->_fTargetPos, res->_fTargetPos + 6, begin(des));
-        // singularity_counter = 0;
-
-
-        // // // deal with 6 joint ambiguity 
-        // // float delta_angle = des[5] - current_joint[5];
-        // // if (delta_angle > 100.0) {
-        // //     std::cout << ": Adjusting by -180 degrees. "
-        // //         << "Original des: " << des[5] << ", Current joint: " << current_joint[5]
-        // //         << ", Delta angle: " << delta_angle << std::endl;
-        // //     des[5] -= 180.0;
-        // // } else if (delta_angle < -100.0) {
-        // //     std::cout << ": Adjusting by +180 degrees. "
-        // //         << "Original des: " << des[5] << ", Current joint: " << current_joint[5]
-        // //         << ", Delta angle: " << delta_angle << std::endl;
-        // //     des[5] += 180.0;
-        // // }
-
-        
-        // // qd calculation complete 
-        // bool singularity = false;
-        // bool reversed = false;
-
-
-        // if (count_motion == 0) {
-        //     memcpy(previous_joint_command, robot_state->actual_joint_position, sizeof(float) * 6);
-        // }
-
-        
-        // for (int i = 0; i < 6; i++) {
-
-        //     float delta = des[i] - current_joint[i];
-
-        //     // // check singularity
-        //     if (std::abs(delta) > 20) {
-        //         singularity = true;
-        //         std::cout<< "Singularity occured at "<<i<<"th joint, previous joint command : "<<current_joint[i]<<", desired joint command : "<<des[i]<< std::endl; 
-        //         ROS_INFO("SINGULARITY OCCURED");
-        //         singularity_counter++;
-        //         break;
-        //     }
-
-        // }
-
-        // if (singularity_counter >= 10) {
-        //     ROS_WARN("SINGULARITY PERSISTED FOR 10 FRAMES, EXITING FUNCTION.");
-        //     is_singular = true;
-        // }
-
-        // // if (!singularity) {
-        // //     singularity_counter = 0;
-        // // }
-
-
-        // // Adjust for singularity or first motion
-        // if (singularity && !reversed) {
-        //     for (int i = 0; i < 6; i++)
-        //     {
-        //         des[i] = current_joint[i];
-        //     } 
-        // }
-        
-        // std::copy(robot_state->actual_flange_position, robot_state->actual_flange_position + 6, begin(prev.xPrev));
-
-        // Eigen::VectorXf::Map(&prev.vPrev[0], 6) = imp.vel_m;
-        // Eigen::VectorXf::Map(&prev.F_extPrev[0], 6) = F_ext;
-        
- 
-        // for (int i = 0; i < 6; i++)
-        // {
-        //     previous_joint_command[i] = des[i];
-        // } 
-
-        // count_motion ++;
-    
-        // return {des, is_singular};
 
         float current_joint[NUMBER_OF_JOINT] = {0,};
         memcpy(current_joint, robot_state->actual_joint_position, sizeof(float) * 6);

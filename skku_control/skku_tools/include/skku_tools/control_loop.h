@@ -466,6 +466,7 @@ class ControlLoop : protected PBIC{
         // 기존 Python goal을 PBIC 때와 같은 의미로 먼저 맞추기 위해
         // 우선 flange 기준으로 해석한다.
         TaskPointMode task_point_mode_ = TaskPointMode::kFlange;
+        // TaskPointMode task_point_mode_ = TaskPointMode::kTCP;
 
         // flange 기준 실험에서는 identity 유지
         Eigen::Isometry3f T_flange_tcp_ = Eigen::Isometry3f::Identity();
@@ -506,4 +507,3 @@ public:
 };
 
 }
-

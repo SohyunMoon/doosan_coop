@@ -2971,28 +2971,6 @@ double working_mode;
 using namespace std::string_literals;  // NOLINT(google-build-using-namespace)
 bool controlState = false; 
 
-// // Runtime setting
-// Eigen::Isometry3f T_flange_tcp = Eigen::Isometry3f::Identity();
-
-// // 예시: flange에서 TCP까지 z축 +120 mm
-// T_flange_tcp.translation() << 0.0f, 0.0f, 0.120f;
-
-// // tool orientation offset이 있으면 여기도 넣기
-// // T_flange_tcp.linear() = ...
-// control_loop.setToolTransform(T_flange_tcp);
-
-// // PBIC(TDC inner loop)
-// // control_loop.setImpedanceImplMode(ImpedanceImplMode::kPBIC_TDC);
-
-// // DBIC
-// control_loop.setImpedanceImplMode(ImpedanceImplMode::kDBIC);
-
-// // TCP 기준
-// control_loop.setTaskPointMode(TaskPointMode::kTCP);
-
-// flange 기준 실험이면 이걸로 변경
-// control_loop.setTaskPointMode(TaskPointMode::kFlange);
-
 // =========================================================================
 // Helper Functions
 // =========================================================================
@@ -3149,46 +3127,7 @@ TrajectoryGen::PlanParam plan;
 TrajectoryGen::TraParam tra;
 float distance_threshold = 50; 
 std::vector<uint64_t> loopTimes;
-/* new0317
-namespace {
-    void fillEulerDummyForIK(const SKKU::Trajectory& src_quat, SKKU::Trajectory& dst_euler) {
-        dst_euler = src_quat;
 
-        static bool first = true;
-        static float prev_rpy[3] = {0.f, 0.f, 0.f};
-
-        Eigen::Quaternionf q = quatFromPose7(src_quat.pos_d);
-
-        std::array<float, 3> rpy;
-        if (first) {
-            rpy = quatToEulerDegZYX(q);
-            first = false;
-        } else {
-            rpy = quatToEulerDegZYXNear(q, prev_rpy[0], prev_rpy[1], prev_rpy[2]);
-        }
-
-        float roll  = rpy[0];
-        float pitch = rpy[1];
-        float yaw   = rpy[2];
-
-        prev_rpy[0] = roll;
-        prev_rpy[1] = pitch;
-        prev_rpy[2] = yaw;
-
-        dst_euler.pos_d[3] = roll;
-        dst_euler.pos_d[4] = pitch;
-        dst_euler.pos_d[5] = yaw;
-
-        dst_euler.vel_d[3] = 0.0f;
-        dst_euler.vel_d[4] = 0.0f;
-        dst_euler.vel_d[5] = 0.0f;
-
-        dst_euler.acc_d[3] = 0.0f;
-        dst_euler.acc_d[4] = 0.0f;
-        dst_euler.acc_d[5] = 0.0f;
-    }
-}
-*/
 namespace {
     bool g_fill_euler_dummy_first = true;
     float g_fill_euler_dummy_prev_rpy[3] = {0.f, 0.f, 0.f};
@@ -3234,46 +3173,7 @@ namespace {
         dst_euler.acc_d[5] = 0.0f;
     }
 }
-/* new0317
-void TrajectoryGen::init(moveit_msgs::CartesianTrajectory msg, moveit_msgs::CartesianTrajectory prev_msg, float current_position[NUMBER_OF_JOINT], int operator_call_count_) {
-    float start_point[7]; 
-    float goal[7];
-    float tra_time = 0.0;
 
-    for (int i = 0; i < 3; i++) start_point[i] = current_position[i];
-
-    Eigen::Quaternionf q_start =
-        quatFromEulerDeg(current_position[3], current_position[4], current_position[5]);
-
-    writeQuatXYZW(q_start, &start_point[3]);
-
-    goal[0] = msg.points[0].point.pose.position.x;
-    goal[1] = msg.points[0].point.pose.position.y;
-    goal[2] = msg.points[0].point.pose.position.z;
-    goal[3] = msg.points[0].point.pose.orientation.x;
-    goal[4] = msg.points[0].point.pose.orientation.y;
-    goal[5] = msg.points[0].point.pose.orientation.z;
-    goal[6] = msg.points[0].point.pose.orientation.w; 
-
-    float dot = start_point[3]*goal[3] + start_point[4]*goal[4] + start_point[5]*goal[5] + start_point[6]*goal[6];
-    if (dot < 0.0f) {
-        for(int i = 3; i < 7; i++) start_point[i] *= -1.0f;
-    }
-
-    tra_time = msg.points[0].time_from_start.toSec();
-    plan.time = tra_time;
-
-    for (int i = 0; i < 7; i++) {
-        plan.ps[i] = start_point[i];
-        plan.pf[i] = goal[i];
-        plan.vs[i] = 0.0f; plan.vf[i] = 0.0f; 
-        plan.as[i] = 0.0f; plan.af[i] = 0.0f;
-    }
-
-    trajectory_gen_.TrajectoryPlan(&plan);
-    std::cout << "Full Quaternion Pipeline Initialized." << std::endl;
-}
-*/
 void TrajectoryGen::init(moveit_msgs::CartesianTrajectory msg,
                          moveit_msgs::CartesianTrajectory prev_msg,
                          float current_position[NUMBER_OF_JOINT],
@@ -3369,19 +3269,7 @@ std::vector<std::array<double, 7>> TrajectoryGen::quadraticInterpolation(const s
 std::vector<std::array<double, 7>> TrajectoryGen::upsampleTrajectory(const moveit_msgs::CartesianTrajectory& msg, int newPointsNum) {
     int originalPointsNum = msg.points.size();
     std::vector<std::array<double, 7>> controlPoints(originalPointsNum);
-    /* new0317
-    for (int i = 0; i < originalPointsNum; ++i) {
-        controlPoints[i] = {
-            msg.points[i].point.pose.position.x,
-            msg.points[i].point.pose.position.y,
-            msg.points[i].point.pose.position.z,
-            msg.points[i].point.pose.orientation.x,
-            msg.points[i].point.pose.orientation.y,
-            msg.points[i].point.pose.orientation.z,
-            msg.points[i].point.pose.orientation.w  
-        };
-    }
-*/
+
     Eigen::Quaternionf q_prev =
         quatFromEulerDeg(current_position[3], current_position[4], current_position[5]);
 
@@ -3548,12 +3436,14 @@ void TrajectoryGen::initDBICGoal(const Eigen::Vector3f& p0_m,
     }
 
     // dbic_T_ = std::max(1e-3, msg.points[0].time_from_start.toSec());
-    
-    // DBIC free-space 디버그용:
-    // 너무 긴 goal time은 시작 acceleration이 너무 작아져서
-    // 실제로는 출발 안 하는 것처럼 보일 수 있다.
+
+    // 실제 사용자가 보낸 goal time을 그대로 사용한다.
     const double T_cmd = msg.points[0].time_from_start.toSec();
-    dbic_T_ = std::max(0.5, std::min(T_cmd, 5.0));
+    dbic_T_ = std::max(1e-3, T_cmd);
+
+    std::cout << "[DBIC INIT] requested_T=" << T_cmd
+              << " dbic_T_=" << dbic_T_ << std::endl;
+
 }
 
 TaskRef TrajectoryGen::sampleDBICGoal(double t_sec, double dt_sec) const {
@@ -3598,10 +3488,16 @@ TaskRef TrajectoryGen::sampleDBICGoal(double t_sec, double dt_sec) const {
 
     ref.w_d     = 0.5f * (w_p + w_m);
     ref.alpha_d = (w_p - w_m) / static_cast<float>(dt_sec);
-    // ref.motion_finished = (t_sec >= dbic_T_);
 
-    // 마지막 샘플(t == T)은 한 번 제어기에 보내고,
-    // 그 다음 루프에서 종료되도록 한다.
+    if (t_sec >= dbic_T_) {
+        ref.p_d = dbic_pf_;
+        ref.q_d = dbic_qf_;
+        ref.v_d.setZero();
+        ref.a_d.setZero();
+        ref.w_d.setZero();
+        ref.alpha_d.setZero();
+    }
+
     ref.motion_finished = (t_sec > dbic_T_);
 
     return ref;
@@ -3717,6 +3613,7 @@ void TrajectoryGen::initDBICPath(const Eigen::Vector3f& p0_m,
 
     // 마지막 샘플도 한 번은 출력되게 한다.
     dbic_path_samples_.back().motion_finished = false;
+    
 }
 
 TaskRef TrajectoryGen::sampleDBICPath(size_t idx) const {
@@ -3763,8 +3660,53 @@ ControlLoop::~ControlLoop() {
     }
 }
 
-ImpedanceControlLoop::ImpedanceControlLoop(moveit_msgs::CartesianTrajectory msg, u_int64_t loop_time, RealtimeConfig realtimeconfig, DRAFramework::CDRFLEx& Drfl)
-    : ControlLoop(msg, loop_time, realtimeconfig, Drfl) {}
+ImpedanceControlLoop::ImpedanceControlLoop(moveit_msgs::CartesianTrajectory msg,
+                                           u_int64_t loop_time,
+                                           RealtimeConfig realtimeconfig,
+                                           DRAFramework::CDRFLEx& Drfl)
+    : ControlLoop(msg, loop_time, realtimeconfig, Drfl)
+{
+    // 현재 실험은 DBIC
+    setImpedanceImplMode(ImpedanceImplMode::kDBIC);
+    // setImpedanceImplMode(ImpedanceImplMode::kPBIC_TDC);
+
+    ////////////////////////// Flange ////////////////////////// 
+    setTaskPointMode(TaskPointMode::kFlange);
+
+    // flange 기준 실험에서는 추가 tool offset을 쓰지 않는다
+    Eigen::Isometry3f T = Eigen::Isometry3f::Identity();
+    setToolTransform(T);
+
+    //////////////////////////  TCP ////////////////////////// 
+    // // EE를 실제 TCP 기준으로 제어
+    // setTaskPointMode(TaskPointMode::kTCP);
+
+    // // ------------------------------------------------------------
+    // // flange -> actual EE(TCP) transform
+    // // 아래 숫자는 반드시 실제 장착값으로 바꿔야 한다.
+    // // 단위: meter / rad
+    // // ------------------------------------------------------------
+    // Eigen::Isometry3f T = Eigen::Isometry3f::Identity();
+
+    // // 예시: flange에서 TCP까지 local 
+    // const float tcp_x = 0.0f;
+    // const float tcp_y = 0.0f;
+    // const float tcp_z = 0.0f;
+
+    // // 예시 회전 오프셋: 실제 EE frame이 flange와 다르면 여기를 수정
+    // const float tcp_roll_rad  = 0.0f;
+    // const float tcp_pitch_rad = 0.0f;
+    // const float tcp_yaw_rad   = 0.0f;
+
+    // T.translation() << tcp_x, tcp_y, tcp_z;
+
+    // Eigen::AngleAxisf rx(tcp_roll_rad,  Eigen::Vector3f::UnitX());
+    // Eigen::AngleAxisf ry(tcp_pitch_rad, Eigen::Vector3f::UnitY());
+    // Eigen::AngleAxisf rz(tcp_yaw_rad,   Eigen::Vector3f::UnitZ());
+    // T.linear() = (rz * ry * rx).toRotationMatrix();
+
+    // setToolTransform(T);
+}
 
 ImpedanceControlLoop::~ImpedanceControlLoop() {}
 
@@ -4099,361 +4041,6 @@ void PositionControlLoop::operator_jpath(const moveit_msgs::CartesianTrajectory&
     previous_msg = msg;
 }
 
-// void ImpedanceControlLoop::operator()(const moveit_msgs::CartesianTrajectory& msg) {
-//     std::cout << "Impedance Goal-directed Mode called" << std::endl;
-//     fail = 0;
-//     control_mode_ = "Impedance goal mode";
-//     operator_call_count_++;
-//     sol_space = 0;
-//     count = 0;
-
-//     Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE); 
-//     Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
-//     std::this_thread::sleep_for(std::chrono::milliseconds(10)); 
-
-//     LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt(); 
-
-//     float current_joint[NUMBER_OF_JOINT] = {0, };
-//     memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-//     memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-
-//     trajectory_gen_.init(msg, previous_msg, current_position, operator_call_count_);
-    
-//     Duration control_loop_time = Duration(loop_time_);
-//     float st = static_cast<float>(loop_time_) / 1000;
-
-//     start_Motion(robot_state, prev, imp);
-
-//     auto start = std::chrono::high_resolution_clock::now();
-//     loopTimes.clear();
-//     controlState = true;
-//     auto start_time = std::chrono::high_resolution_clock::now();
-//     startDataSaving();
-
-//     while (true) {
-//         robot_state = Drfl_.read_data_rt();
-
-//         if (!spinMotion(robot_state, control_loop_time, desired, sol_space) ||
-//             !spinControl(robot_state, control_loop_time, control_command, desired, sol_space)) {
-//             break;
-//         }
-
-//         if (exitLoop || g_nKill_dsr_control) {
-//             fail = 2;
-//             break;
-//         }
-
-//         Drfl_.torque_rt(control_command.tau_d, st);
-
-//         auto current = std::chrono::high_resolution_clock::now();
-//         Duration loop_time(std::chrono::duration_cast<std::chrono::milliseconds>(current - start));
-//         loopTimes.push_back(loop_time.toMSec());
-
-//         if (control_loop_time > loop_time) {
-//             std::this_thread::sleep_for(control_loop_time() - loop_time());
-//         }
-//         start = std::chrono::high_resolution_clock::now();
-//         count++;
-//     }
-
-//     stopDataSaving();
-//     saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
-//     controlState = false;
-
-//     robot_state = Drfl_.read_data_rt(); 
-    
-//     auto finished_time  = std::chrono::high_resolution_clock::now();
-//     auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(finished_time - start_time);
-//     std::cout << "elapsed time: " << elapsed_time.count() << " ms" << std::endl;
-
-//     setScheduling(originalSetting_);
-    
-//     float final_position[NUMBER_OF_JOINT] = {0, };
-//     memcpy(final_position, robot_state->actual_flange_position, NUMBER_OF_JOINT*sizeof(float)); 
-
-//     float distance = std::sqrt(
-//         std::pow(final_position[0] - msg.points[0].point.pose.position.x, 2) +
-//         std::pow(final_position[1] - msg.points[0].point.pose.position.y, 2) +
-//         std::pow(final_position[2] - msg.points[0].point.pose.position.z, 2)
-//     );
-
-//     if (distance > distance_threshold) fail = 2;
-//     else fail = 1;
-    
-//     previous_msg = msg;
-// }
-/*new0317
-void ImpedanceControlLoop::operator()(const moveit_msgs::CartesianTrajectory& msg) {
-    std::cout << "\n======================================================\n";
-    std::cout << "[INFO] Impedance Goal-directed Mode called" << std::endl;
-    fail = 0;
-    control_mode_ = "Impedance goal mode";
-    operator_call_count_++;
-    sol_space = 0;
-    count = 0;
-
-    Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE); 
-    Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10)); 
-
-    LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt(); 
-
-    float current_joint[NUMBER_OF_JOINT] = {0, };
-    memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-    memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-
-    // ----------------------------------------------------------------------------------
-    // 🟢 [TEST POINT 1] 입력값(Input) vs 현재 상태(Current) 확인
-    // ----------------------------------------------------------------------------------
-    std::cout << "[TEST POINT 1] Initial Check\n";
-    std::cout << " - Start Pos (X,Y,Z) : " << current_position[0] << ", " << current_position[1] << ", " << current_position[2] << "\n";
-    std::cout << " - Input Goal(X,Y,Z) : " << msg.points[0].point.pose.position.x << ", " 
-                                          << msg.points[0].point.pose.position.y << ", " 
-                                          << msg.points[0].point.pose.position.z << "\n";
-    std::cout << "------------------------------------------------------\n";
-
-    trajectory_gen_.init(msg, previous_msg, current_position, operator_call_count_);
-    
-    Duration control_loop_time = Duration(loop_time_);
-    float st = static_cast<float>(loop_time_) / 1000;
-
-    start_Motion(robot_state, prev, imp);
-
-    auto start = std::chrono::high_resolution_clock::now();
-    loopTimes.clear();
-    controlState = true;
-    auto start_time = std::chrono::high_resolution_clock::now();
-    startDataSaving();
-
-    while (true) {
-        robot_state = Drfl_.read_data_rt();
-
-        if (!spinMotion(robot_state, control_loop_time, desired, sol_space) ||
-            !spinControl(robot_state, control_loop_time, control_command, desired, sol_space)) {
-            break;
-        }
-
-        // ----------------------------------------------------------------------------------
-        // 🟡 [TEST POINT 2] 실시간 생성 궤적(Desired) vs 실제 로봇 상태(Actual) 확인
-        // 주의: 1ms마다 출력하면 제어기가 뻗으므로 500 카운트(0.5초)마다 1번만 출력합니다.
-        // ----------------------------------------------------------------------------------
-        if (count % 500 == 0) {
-            std::cout << "[TEST POINT 2] Loop Count: " << count << " (Time: " << (count * st) << " sec)\n";
-            // desired.q_d 가 조인트 각도인지 위치인지에 따라 출력이 달라질 수 있습니다. (여기선 조인트로 가정)
-            std::cout << " - Desired (q_d 0~2): " << desired.q_d[0] << ", " << desired.q_d[1] << ", " << desired.q_d[2] << "\n";
-            std::cout << " - Actual  (Act 0~2): " << robot_state->actual_joint_position[0] << ", " 
-                                                  << robot_state->actual_joint_position[1] << ", " 
-                                                  << robot_state->actual_joint_position[2] << "\n";
-        }
-
-        if (exitLoop || g_nKill_dsr_control) {
-            fail = 2;
-            break;
-        }
-
-        Drfl_.torque_rt(control_command.tau_d, st);
-
-        auto current = std::chrono::high_resolution_clock::now();
-        Duration loop_time(std::chrono::duration_cast<std::chrono::milliseconds>(current - start));
-        loopTimes.push_back(loop_time.toMSec());
-
-        if (control_loop_time > loop_time) {
-            std::this_thread::sleep_for(control_loop_time() - loop_time());
-        }
-        start = std::chrono::high_resolution_clock::now();
-        count++;
-    }
-
-    stopDataSaving();
-    saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
-    controlState = false;
-
-    robot_state = Drfl_.read_data_rt(); 
-    
-    auto finished_time  = std::chrono::high_resolution_clock::now();
-    auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(finished_time - start_time);
-    std::cout << "------------------------------------------------------\n";
-    std::cout << "[INFO] Control Loop Finished. Elapsed time: " << elapsed_time.count() << " ms" << std::endl;
-
-    setScheduling(originalSetting_);
-    
-    float final_position[NUMBER_OF_JOINT] = {0, };
-    memcpy(final_position, robot_state->actual_flange_position, NUMBER_OF_JOINT*sizeof(float)); 
-
-    float distance = std::sqrt(
-        std::pow(final_position[0] - msg.points[0].point.pose.position.x, 2) +
-        std::pow(final_position[1] - msg.points[0].point.pose.position.y, 2) +
-        std::pow(final_position[2] - msg.points[0].point.pose.position.z, 2)
-    );
-
-    // ----------------------------------------------------------------------------------
-    // 🔴 [TEST POINT 3] 최종 도착 위치(Final) vs 원래 목표(Input Goal) 오차 확인
-    // ----------------------------------------------------------------------------------
-    std::cout << "[TEST POINT 3] Final Result\n";
-    std::cout << " - Final Pos (X,Y,Z) : " << final_position[0] << ", " << final_position[1] << ", " << final_position[2] << "\n";
-    std::cout << " - Input Goal(X,Y,Z) : " << msg.points[0].point.pose.position.x << ", " 
-                                          << msg.points[0].point.pose.position.y << ", " 
-                                          << msg.points[0].point.pose.position.z << "\n";
-    std::cout << " => Final Distance Error: " << distance << " mm\n";
-    std::cout << "======================================================\n\n";
-
-    if (distance > distance_threshold) fail = 2;
-    else fail = 1;
-    
-    previous_msg = msg;
-}
-
-void ImpedanceControlLoop::operator_path(const moveit_msgs::CartesianTrajectory& msg) {
-    if (msg.points.empty()) {
-        fail = 2;
-        return;
-    }
-
-    std::cout << "Impedance Push-path Mode called" << std::endl;
-    fail = 0;
-    control_mode_ = "Impedance path mode";
-    operator_call_count_++;
-
-    LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt(); 
-    float current_joint[NUMBER_OF_JOINT] = {0, };
-    memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-    memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-
-    Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE); 
-    Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
-    
-    int originalPointsNum = msg.points.size();
-    double duration = msg.points.back().time_from_start.toSec();
-    int newPointsNum = static_cast<int>(duration * 1000/loop_time_);
-
-    count = 0;
-    sol_space = 0;
-    count_motion = 0;
-
-    Duration control_loop_time = Duration(loop_time_);
-    float st = static_cast<float>(loop_time_) / 1000;
-
-    robot_state = Drfl_.read_data_rt();
-    start_Motion(robot_state, prev, imp);
-    
-    float yaw_start = static_cast<float>(quatMsgToYawDeg(msg.points.front().point.pose.orientation));
-    float yaw_end   = static_cast<float>(quatMsgToYawDeg(msg.points.back().point.pose.orientation));
-
-    yaw_end = unwrapNear(yaw_end, yaw_start);
-    float delta_yaw = yaw_end - yaw_start;
-
-    if (current_joint[5] > 90 && delta_yaw > 0) {
-        float goal_joint[NUMBER_OF_JOINT];
-        current_position[2] += 100;
-        LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(current_position, 2, COORDINATE_SYSTEM_BASE, 1);
-        for (int i = 0; i < 6; i++) goal_joint[i] = res->_fTargetPos[i];
-        Drfl_.movej(goal_joint,60,30);
-
-        robot_state = Drfl_.read_data_rt();
-        memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT*sizeof(float));
-        current_joint[5] -= 360;
-        Drfl_.movej(current_joint, 60, 30);
-
-        robot_state = Drfl_.read_data_rt();
-        memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT*sizeof(float));
-        current_position[2] -= 100;
-        LPINVERSE_KINEMATIC_RESPONSE res2 = Drfl_.ikin(current_position, 2, COORDINATE_SYSTEM_BASE, 1);
-        for (int i = 0; i < 6; i++) goal_joint[i] = res2->_fTargetPos[i];
-        Drfl_.movej(goal_joint,60,30);
-    }
-    else if (current_joint[5] < -90 && delta_yaw < 0) {
-        float goal_joint[NUMBER_OF_JOINT];
-        current_position[2] += 100;
-        LPINVERSE_KINEMATIC_RESPONSE res = Drfl_.ikin(current_position, 2, COORDINATE_SYSTEM_BASE, 1);
-        for (int i = 0; i < 6; i++) goal_joint[i] = res->_fTargetPos[i];
-        Drfl_.movej(goal_joint,60,30);
-
-        robot_state = Drfl_.read_data_rt();
-        memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT*sizeof(float));
-        current_joint[5] += 360;
-        Drfl_.movej(current_joint, 60, 30);
-
-        robot_state = Drfl_.read_data_rt();
-        memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT*sizeof(float));
-        current_position[2] -= 100;
-        LPINVERSE_KINEMATIC_RESPONSE res2 = Drfl_.ikin(current_position, 2, COORDINATE_SYSTEM_BASE, 1);
-        for (int i = 0; i < 6; i++) goal_joint[i] = res2->_fTargetPos[i];
-        Drfl_.movej(goal_joint,60,30);
-    }
-    
-    robot_state = Drfl_.read_data_rt(); 
-    memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-
-    auto start = std::chrono::high_resolution_clock::now();
-    float initiate_pos[NUMBER_OF_JOINT] = {0, };
-
-    initiate_pos[0] = msg.points[0].point.pose.position.x;
-    initiate_pos[1] = msg.points[0].point.pose.position.y;
-    initiate_pos[2] = msg.points[0].point.pose.position.z;
-    initiate_pos[3] = current_position[3];
-    initiate_pos[4] = current_position[4];
-
-    float distance = std::sqrt(
-        std::pow(initiate_pos[0] - current_position[0], 2) +
-        std::pow(initiate_pos[1] - current_position[1], 2) +
-        std::pow(initiate_pos[2] - current_position[2], 2)
-    );
-
-    if (distance > distance_threshold) {
-        fail = 2;
-        return;
-    }
-
-    robot_state = Drfl_.read_data_rt(); 
-    memcpy(current_joint, robot_state->actual_joint_position, NUMBER_OF_JOINT*sizeof(float));
-    memcpy(current_position, robot_state->actual_flange_position, NUMBER_OF_JOINT*sizeof(float));
-
-    trajectory_gen_.CurvePoints_ = trajectory_gen_.upsampleTrajectory(msg, newPointsNum);
-
-    Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE); 
-    Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
-    controlState = true; 
-
-    while (spinMotion_path(robot_state, control_loop_time, desired, sol_space) && spinControl(robot_state, control_loop_time, control_command, desired, sol_space)) {
-        robot_state = Drfl_.read_data_rt();
-        
-        if (!exitLoop && !g_nKill_dsr_control) {
-            Drfl_.torque_rt(control_command.tau_d, st);
-            auto current = std::chrono::high_resolution_clock::now();
-            auto loop_time = std::chrono::duration_cast<std::chrono::milliseconds>(current - start);
-
-            if (std::chrono::milliseconds(static_cast<int64_t>(control_loop_time.toMSec())) > loop_time) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int64_t>(control_loop_time.toMSec())) - loop_time);
-            }
-            start = std::chrono::high_resolution_clock::now();
-        } else {
-            fail = true;
-            break;
-        }
-
-        stopDataSaving();
-        count++;
-    }
-
-    previous_msg = msg;
-    controlState = false;
-
-    setScheduling(originalSetting_);
-    float final_position[NUMBER_OF_JOINT] = {0, };
-    memcpy(final_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
-
-    distance = std::sqrt(
-        std::pow(final_position[0] - msg.points[originalPointsNum - 1].point.pose.position.x, 2) +
-        std::pow(final_position[1] - msg.points[originalPointsNum - 1].point.pose.position.y, 2) +
-        std::pow(final_position[2] - msg.points[originalPointsNum - 1].point.pose.position.z, 2)
-    );
-
-    if (distance > distance_threshold) fail = 2;
-    else fail = 1;
-}
-*/
-
-//new0317
 void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& msg) {
     std::cout << "\n======================================================\n";
     std::cout << "[INFO] Impedance Goal-directed Mode called" << std::endl;
@@ -4727,6 +4314,7 @@ void ImpedanceControlLoop::runPBICPath(const moveit_msgs::CartesianTrajectory& m
     if (distance > distance_threshold) fail = 2;
     else fail = 1;
 }
+
 void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& msg) {
     std::cout << "\n======================================================\n";
     std::cout << "[INFO] DB-IC Goal Mode called" << std::endl;
@@ -4750,11 +4338,6 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
 
     resetDBICControllerState();
 
-    // TaskState current_tcp_state =
-    //     getTaskState(robot_state, TaskPointMode::kTCP, T_flange_tcp_);
-
-    // trajectory_gen_.initDBICGoal(current_tcp_state.p, current_tcp_state.q, msg);
-
     TaskState current_task_state =
         getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
 
@@ -4765,31 +4348,43 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
 
     auto start = std::chrono::high_resolution_clock::now();
     auto start_time = std::chrono::high_resolution_clock::now();
+//new0322
+    // loopTimes.clear();
+    // controlState = true;
+    // startDataSaving();
 
     loopTimes.clear();
     controlState = true;
-    startDataSaving();
 
+    constexpr bool kEnableDbicDataSaving = false;
+    if (kEnableDbicDataSaving) {
+        startDataSaving();
+    }    
+//
     TaskRef ref_tcp;
     TaskRef ref_task;
+
+    // hold phase용 상태 변수는 while 바깥에서 선언해야 한다.
+    bool entered_hold_phase = false;
+    TaskRef hold_ref_task{};
 
     while (true) {
         robot_state = Drfl_.read_data_rt();
 
-        if (!spinMotionDBIC(control_loop_time, ref_tcp, ref_task) ||
-            !spinControlDBIC(robot_state, control_loop_time, control_command, ref_task)) {
-            break;
-        }
+        bool motion_ok  = spinMotionDBIC(control_loop_time, ref_tcp, ref_task);
+        bool control_ok = spinControlDBIC(robot_state, control_loop_time, control_command, ref_task);
 
         if (exitLoop || g_nKill_dsr_control) {
             fail = 2;
             break;
         }
 
+        // 마지막 trajectory sample도 실제 로봇에 한 번은 보낸다.
         Drfl_.torque_rt(control_command.tau_d, st);
 
         auto current = std::chrono::high_resolution_clock::now();
-        Duration loop_time(std::chrono::duration_cast<std::chrono::milliseconds>(current - start));
+        Duration loop_time(
+            std::chrono::duration_cast<std::chrono::milliseconds>(current - start));
         loopTimes.push_back(loop_time.toMSec());
 
         if (control_loop_time > loop_time) {
@@ -4797,11 +4392,109 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
         }
 
         start = std::chrono::high_resolution_clock::now();
-        count++;
+        count++;   // main loop에서는 필요: spinMotionDBIC()의 t_sec를 전진시킴
+
+        if (!control_ok) {
+            fail = 2;
+            std::cout << "[DBIC BREAK] motion_ok=" << motion_ok
+                      << ", control_ok=" << control_ok
+                      << ", count=" << count
+                      << ", t_sec=" << (static_cast<double>(count) * loop_time_ * 1e-3)
+                      << std::endl;
+            break;
+        }
+
+        // trajectory 시간이 끝났으면 final reference를 hold phase로 넘긴다.
+        if (!motion_ok) {
+            entered_hold_phase = true;
+            hold_ref_task = ref_task;
+
+            // hold 단계에서는 "정지한 최종 목표"를 유지해야 하므로
+            // 속도/가속도 reference는 0으로 만든다.
+            hold_ref_task.v_d.setZero();
+            hold_ref_task.a_d.setZero();
+            hold_ref_task.w_d.setZero();
+            hold_ref_task.alpha_d.setZero();
+            hold_ref_task.motion_finished = false;
+
+            std::cout << "[DBIC BREAK] motion_ok=" << motion_ok
+                      << ", control_ok=" << control_ok
+                      << ", count=" << count
+                      << ", t_sec=" << (static_cast<double>(count) * loop_time_ * 1e-3)
+                      << std::endl;
+            break;
+        }
     }
 
-    stopDataSaving();
-    saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
+    // ------------------------------------------------------------
+    // Hold / settling phase
+    // ------------------------------------------------------------
+    if (entered_hold_phase && fail == 0) {
+        const float pos_tol_m = 0.005f;      // 5 mm
+        const float rot_tol_rad = 0.02f;     // 약 1.15 deg
+        const double hold_timeout_sec = 3.0;
+
+        const int hold_steps = static_cast<int>(
+            std::ceil(hold_timeout_sec / (static_cast<double>(loop_time_) * 1e-3)));
+
+        std::cout << "[DBIC HOLD] start" << std::endl;
+
+        // hold loop는 별도의 주기 타이밍만 관리하면 된다.
+        start = std::chrono::high_resolution_clock::now();
+
+        for (int hold_count = 0; hold_count < hold_steps; ++hold_count) {
+            robot_state = Drfl_.read_data_rt();
+
+            TaskState s_hold =
+                getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
+
+            const float pos_err_m =
+                (hold_ref_task.p_d - s_hold.p).norm();
+            const float rot_err_rad =
+                quatLogError(hold_ref_task.q_d, s_hold.q).norm();
+
+            bool control_ok =
+                spinControlDBIC(robot_state, control_loop_time, control_command, hold_ref_task);
+
+            if (!control_ok || exitLoop || g_nKill_dsr_control) {
+                fail = 2;
+                break;
+            }
+
+            Drfl_.torque_rt(control_command.tau_d, st);
+
+            auto current = std::chrono::high_resolution_clock::now();
+            Duration loop_time(
+                std::chrono::duration_cast<std::chrono::milliseconds>(current - start));
+            loopTimes.push_back(loop_time.toMSec());
+
+            if (control_loop_time > loop_time) {
+                std::this_thread::sleep_for(control_loop_time() - loop_time());
+            }
+
+            start = std::chrono::high_resolution_clock::now();
+
+            // hold loop에서는 count++ 하지 않는다.
+            // 여기서는 trajectory time을 전진시키는 게 아니라,
+            // final reference를 고정한 채 수렴만 시키는 단계다.
+
+            if (pos_err_m < pos_tol_m && rot_err_rad < rot_tol_rad) {
+                std::cout << "[DBIC HOLD] settled, pos_err_mm="
+                          << pos_err_m * 1000.0f
+                          << ", rot_err_rad=" << rot_err_rad
+                          << std::endl;
+                break;
+            }
+        }
+    }
+//new0322
+    // stopDataSaving();
+    // saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
+    // controlState = false;
+    if (kEnableDbicDataSaving) {
+        stopDataSaving();
+        saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
+    }
     controlState = false;
 
     robot_state = Drfl_.read_data_rt();
@@ -4828,8 +4521,11 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
 
     setScheduling(originalSetting_);
 
-    if (distance_mm > distance_threshold) fail = 2;
-    else fail = 1;
+    // 이미 중간에 fail=2가 났으면 그 상태를 유지해야 한다.
+    if (fail != 2) {
+        if (distance_mm > distance_threshold) fail = 2;
+        else fail = 1;
+    }
 
     previous_msg = msg;
 }
@@ -4855,14 +4551,6 @@ void ImpedanceControlLoop::runDBICPath(const moveit_msgs::CartesianTrajectory& m
 
     resetDBICControllerState();
 
-    // TaskState current_tcp_state =
-    //     getTaskState(robot_state, TaskPointMode::kTCP, T_flange_tcp_);
-
-    // trajectory_gen_.initDBICPath(current_tcp_state.p,
-    //                              current_tcp_state.q,
-    //                              msg,
-    //                              static_cast<double>(loop_time_) * 1e-3);
-
     TaskState current_task_state =
         getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
 
@@ -4876,10 +4564,17 @@ void ImpedanceControlLoop::runDBICPath(const moveit_msgs::CartesianTrajectory& m
 
     auto start = std::chrono::high_resolution_clock::now();
     auto start_time = std::chrono::high_resolution_clock::now();
-
+//new0322
+    // loopTimes.clear();
+    // controlState = true;
+    // startDataSaving();
     loopTimes.clear();
     controlState = true;
-    startDataSaving();
+
+    constexpr bool kEnableDbicDataSaving = false;
+    if (kEnableDbicDataSaving) {
+        startDataSaving();
+    }
 
     TaskRef ref_tcp;
     TaskRef ref_task;
@@ -4910,11 +4605,16 @@ void ImpedanceControlLoop::runDBICPath(const moveit_msgs::CartesianTrajectory& m
         start = std::chrono::high_resolution_clock::now();
         count++;
     }
-
-    stopDataSaving();
-    saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
+//new0322
+    // stopDataSaving();
+    // saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
+    // controlState = false;
+    if (kEnableDbicDataSaving) {
+        stopDataSaving();
+        saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
+    }
     controlState = false;
-
+    
     robot_state = Drfl_.read_data_rt();
 
     auto finished_time = std::chrono::high_resolution_clock::now();
@@ -4997,36 +4697,7 @@ bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state, SKKU::Dur
     }
     return false;
 }
-/*new0317
-bool ControlLoop::spinMotion_path(const LPRT_OUTPUT_DATA_LIST& robot_state, SKKU::Duration time_step, Desired& desired, int sol_space) {
-    bool correction_flag = false;
 
-    if (count < trajectory_gen_.CurvePoints_.size()) {
-        auto& point = trajectory_gen_.CurvePoints_[count];
-
-        for (int i = 0; i < 7; ++i) {
-            trajectory.pos_d[i] = point[i];
-            trajectory.vel_d[i] = 0.0f;
-            trajectory.acc_d[i] = 0.0f;
-        }
-
-        Trajectory dummy_traj_for_ik;
-        fillEulerDummyForIK(trajectory, dummy_traj_for_ik);
-
-        auto [output, is_singular] =
-            MotionGenerator(dummy_traj_for_ik, robot_state, prev, imp,
-                            sol_space, correction_flag, operator_call_count_);
-
-        if (is_singular) {
-            return false;
-        }
-
-        desired.q_d = output;
-        return !desired.motion_finished;
-    }
-    return desired.motion_finished;
-}
-*/
 bool ControlLoop::spinMotion_path(const LPRT_OUTPUT_DATA_LIST& robot_state,
                                   SKKU::Duration time_step,
                                   Desired& desired,
@@ -5565,26 +5236,8 @@ void ControlLoop::dataSaving() {
                     rotationMatrix[i][j] = result[i][j];
                 }
             }
-        }//
-        /*new0317
-        for (int i = 0; i<6 ; i++){
-            impedance_position[i] = imp.pos_m(i);
-            position_command[i] = desired.q_d[i];
-            F_external[i] = F.Fext[i];
-            F_impedance[i] = F.Fimp[i];
-            F_DBIC[i] = F.F_DBIC[i];
-            F_coriolis[i] = F.F_coriolis[i];
-            F_rest[i] = F.F_rest[i];
-            joint_error[i] = position_command[i] - actual_positionj[i];
-            position_error[i] = impedance_position[i] - actual_position[i];
-            time[0] += dt;
-            gripper_torque[i] = trq_gg[i];
-            trq_ext_auto[i] = trq_ext2[i];
-            trq_ext_cal[i] = trq_raw[i]-trq_g[i];
-            sensor_FT[i] = sensor_data.AFT_wrench_[i];
-            sensor_FT_matched[i] = sensor_data.AFT_wrench_matched[i];
-        }*/
-        //new0317
+        }
+
         const bool is_pbic_mode =
             (control_mode_ == "PBIC goal mode" ||
              control_mode_ == "PBIC path mode");
