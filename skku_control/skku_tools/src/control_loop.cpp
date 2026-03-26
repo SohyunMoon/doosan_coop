@@ -3112,6 +3112,36 @@ namespace {
                 << " [x y z w] = "
                 << x << ", " << y << ", " << z << ", " << w << std::endl;
     }
+    //new0324
+    inline Eigen::Quaternionf quatFromEulerXYZDegSequence(float x_deg, float y_deg, float z_deg) {
+        Eigen::AngleAxisf xAngle(x_deg * DEG2RAD, Eigen::Vector3f::UnitX());
+        Eigen::AngleAxisf yAngle(y_deg * DEG2RAD, Eigen::Vector3f::UnitY());
+        Eigen::AngleAxisf zAngle(z_deg * DEG2RAD, Eigen::Vector3f::UnitZ());
+
+        Eigen::Quaternionf q = xAngle * yAngle * zAngle;
+        return normalizeQuat(q);
+    }
+
+    inline Eigen::Quaternionf quatFromEulerZYZDegSequence(float z1_deg, float y_deg, float z2_deg) {
+        Eigen::AngleAxisf z1Angle(z1_deg * DEG2RAD, Eigen::Vector3f::UnitZ());
+        Eigen::AngleAxisf yAngle (y_deg  * DEG2RAD, Eigen::Vector3f::UnitY());
+        Eigen::AngleAxisf z2Angle(z2_deg * DEG2RAD, Eigen::Vector3f::UnitZ());
+
+        Eigen::Quaternionf q = z2Angle * yAngle * z1Angle;
+        return normalizeQuat(q);
+    }
+
+    inline void pose6ToQuatAssumingXYZ(const float pose6[6], float quat_xyzw[4]) {
+        Eigen::Quaternionf q = quatFromEulerDeg(pose6[3], pose6[4], pose6[5]);
+        writeQuatXYZW(q, quat_xyzw);
+    }
+
+    inline void pose6ToQuatAssumingZYZ(const float pose6[6], float quat_xyzw[4]) {
+        Eigen::Quaternionf q = quatFromEulerZYZDegSequence(pose6[3], pose6[4], pose6[5]);
+        writeQuatXYZW(q, quat_xyzw);
+    }
+    //
+
 } // end of anonymous namespace
 
 namespace SKKU {
@@ -3172,6 +3202,39 @@ namespace {
         dst_euler.acc_d[4] = 0.0f;
         dst_euler.acc_d[5] = 0.0f;
     }
+    //new0324
+    void logRequestedGoalPose(ControlLoop* loop,
+                              const moveit_msgs::CartesianTrajectory& msg) {
+        if (msg.points.empty()) {
+            return;
+        }
+
+        const auto& pose = msg.points[0].point.pose;
+
+        float goal_position[3] = {
+            static_cast<float>(pose.position.x),
+            static_cast<float>(pose.position.y),
+            static_cast<float>(pose.position.z)
+        };
+
+        float goal_orientation_quat[4] = {
+            static_cast<float>(pose.orientation.x),
+            static_cast<float>(pose.orientation.y),
+            static_cast<float>(pose.orientation.z),
+            static_cast<float>(pose.orientation.w)
+        };
+
+        float goal_pose_quat[7] = {
+            goal_position[0], goal_position[1], goal_position[2],
+            goal_orientation_quat[0], goal_orientation_quat[1],
+            goal_orientation_quat[2], goal_orientation_quat[3]
+        };
+
+        loop->logData("input_goal_position.txt", goal_position, 3);
+        loop->logData("input_goal_orientation_quaternion.txt", goal_orientation_quat, 4);
+        loop->logData("input_goal_pose_quaternion.txt", goal_pose_quat, 7);
+    }
+    //
 }
 
 void TrajectoryGen::init(moveit_msgs::CartesianTrajectory msg,
@@ -4329,6 +4392,8 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
         fail = 2;
         return;
     }
+    //new0324
+    logRequestedGoalPose(this, msg);
 
     Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE);
     Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
@@ -4356,7 +4421,7 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
     loopTimes.clear();
     controlState = true;
 
-    constexpr bool kEnableDbicDataSaving = false;
+    constexpr bool kEnableDbicDataSaving = true;
     if (kEnableDbicDataSaving) {
         startDataSaving();
     }    
@@ -4571,7 +4636,7 @@ void ImpedanceControlLoop::runDBICPath(const moveit_msgs::CartesianTrajectory& m
     loopTimes.clear();
     controlState = true;
 
-    constexpr bool kEnableDbicDataSaving = false;
+    constexpr bool kEnableDbicDataSaving = true;
     if (kEnableDbicDataSaving) {
         startDataSaving();
     }
@@ -4614,7 +4679,7 @@ void ImpedanceControlLoop::runDBICPath(const moveit_msgs::CartesianTrajectory& m
         saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
     }
     controlState = false;
-    
+
     robot_state = Drfl_.read_data_rt();
 
     auto finished_time = std::chrono::high_resolution_clock::now();
@@ -5061,6 +5126,26 @@ void ControlLoop::dataSaving() {
     float actual_quat[4] = {0,};       
     float traj_quat[4] = {0,};         
     float orientation_error[3] = {0,};  
+
+    //new0324
+    float raw_actual_flange_position[NUMBER_OF_JOINT] = {0,};
+    float raw_actual_tcp_position[NUMBER_OF_JOINT] = {0,};
+
+    float actual_flange_quat_assuming_zyz[4] = {0,};
+    float actual_flange_quat_assuming_xyz[4] = {0,};
+
+    float actual_tcp_quat_assuming_zyz[4] = {0,};
+    float actual_tcp_quat_assuming_xyz[4] = {0,};
+
+    float actual_motor_torque[NUMBER_OF_JOINT] = {0,};
+    float target_motor_torque[NUMBER_OF_JOINT] = {0,};
+
+    float actual_flange_position[NUMBER_OF_TASK] = {0,};
+    float actual_tcp_position[NUM_TASK] = {0,};
+
+    float Raw_external_force[NUMBER_OF_TASK] = {0,};
+    //
+
     /*new0317
     std::unordered_map<std::string, int> modeMap = {
         {"Position goal mode", 0},
@@ -5125,6 +5210,15 @@ void ControlLoop::dataSaving() {
         if (is_dbic_mode) {
             s_task = getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
         }
+        //new0324
+        memcpy(actual_flange_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(actual_tcp_position, robot_state->actual_tcp_position, NUMBER_OF_JOINT * sizeof(float));        
+        memcpy(actual_motor_torque, robot_state->actual_motor_torque, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(target_motor_torque, robot_state->target_motor_torque, NUMBER_OF_JOINT * sizeof(float));
+        memcpy(raw_actual_flange_position, robot_state->actual_flange_position, NUMBER_OF_TASK * sizeof(float));
+        memcpy(raw_actual_tcp_position, robot_state->actual_tcp_position, NUM_TASK * sizeof(float));
+        memcpy(Raw_external_force, robot_state->external_tcp_force, NUMBER_OF_TASK * sizeof(float));        
+
         //
         memcpy(trq_g, robot_state->gravity_torque, NUMBER_OF_JOINT * sizeof(float));
         memcpy(actual_position2, robot_state->actual_tcp_position, NUMBER_OF_JOINT * sizeof(float));
@@ -5201,6 +5295,13 @@ void ControlLoop::dataSaving() {
             }
         }
         //
+        //new0324
+        pose6ToQuatAssumingZYZ(raw_actual_flange_position, actual_flange_quat_assuming_zyz);
+        pose6ToQuatAssumingXYZ(raw_actual_flange_position, actual_flange_quat_assuming_xyz);
+
+        pose6ToQuatAssumingZYZ(raw_actual_tcp_position, actual_tcp_quat_assuming_zyz);
+        pose6ToQuatAssumingXYZ(raw_actual_tcp_position, actual_tcp_quat_assuming_xyz);
+        //
         convertToArray(trajectory.pos_d, traj_position);
         convertToArray(trajectory.vel_d, traj_velocity);
         convertToArray(trajectory.acc_d, traj_acceleration);
@@ -5271,6 +5372,18 @@ void ControlLoop::dataSaving() {
         }
         time[0] += dt;//     
 
+        //new0324
+        logData("actual_flange_position.txt", actual_flange_position, NUMBER_OF_JOINT);
+        logData("actual_tcp_position.txt", actual_tcp_position, NUM_TASK);                
+        logData("actual_motor_torque.txt", actual_motor_torque, NUMBER_OF_JOINT);
+        logData("target_motor_torque.txt", target_motor_torque, NUMBER_OF_JOINT);
+        logData("actual_flange_quaternion_assuming_ZYZ.txt", actual_flange_quat_assuming_zyz, 4);
+        logData("actual_flange_quaternion_assuming_XYZ.txt", actual_flange_quat_assuming_xyz, 4);
+        logData("actual_tcp_quaternion_assuming_ZYZ.txt", actual_tcp_quat_assuming_zyz, 4);
+        logData("actual_tcp_quaternion_assuming_XYZ.txt", actual_tcp_quat_assuming_xyz, 4);
+        logData("Raw_external_force.txt", Raw_external_force, NUMBER_OF_TASK);     
+
+        //
         logData("filtered_acceleration.txt", filtered_accelerationj, NUMBER_OF_JOINT);
         logData("time.txt",time,1);
         logData("Control mode.txt", controlMode, 1); 

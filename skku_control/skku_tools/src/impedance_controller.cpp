@@ -324,13 +324,16 @@ namespace SKKU
 
         // 행렬에 들어가는 6개의 숫자들은 차례대로 [X, Y, Z, Roll, Pitch, Yaw] 축을 의미
         Md_.diagonal() << 5.0f, 5.0f, 2.0f, 0.20f, 0.20f, 0.20f;
-        Kd_.diagonal() << 200.0f, 200.0f, 200.0f, 100.0f, 100.0f, 100.0f;
+        Kd_.diagonal() << 400.0f, 400.0f, 400.0f, 200.0f, 200.0f, 200.0f;
+        //new0326
+        Bd_.diagonal() << 10.0f, 10.0f, 10.0f, 5.0f, 5.0f, 5.0f;
 
-        for (int i = 0; i < 6; ++i) {
-            Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
-        }
+        //new0326
+        // for (int i = 0; i < 6; ++i) {
+        //     Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
+        // }
 
-        Md_inv_ = Md_.inverse();
+        // Md_inv_ = Md_.inverse();
 
     // // ------------------------------------------------------------
     // // DB-IC desired impedance
@@ -596,6 +599,8 @@ namespace SKKU
         Eigen::Matrix<float, 6, 1> g    = mapVec6(robot_state->gravity_torque);
         Eigen::Matrix<float, 6, 1> qdot =
             mapJointVelDegToRad(robot_state->actual_joint_velocity);
+        //new0326
+        Eigen::Matrix<float, 6, 1> F_int = mapVec6(robot_state->external_tcp_force);
 
         // ------------------------------------------------------------
         // Force measurement conditioning
@@ -632,31 +637,35 @@ namespace SKKU
 
         e.tail<3>()    = quatLogError(ref.q_d, s.q);
         edot.tail<3>() = ref.w_d - s.w;
-
-        Eigen::Matrix<float, 6, 1> xdd_d = Eigen::Matrix<float, 6, 1>::Zero();
-        xdd_d.head<3>() = ref.a_d;
-        xdd_d.tail<3>() = ref.alpha_d;
-
+        //new0326
+        // Eigen::Matrix<float, 6, 1> xdd_d = Eigen::Matrix<float, 6, 1>::Zero();
+        // xdd_d.head<3>() = ref.a_d;
+        // xdd_d.tail<3>() = ref.alpha_d;
         // DB-IC core
-        Eigen::Matrix<float, 6, 1> u_d =
-            xdd_d + Md_inv_ * (Bd_ * edot + Kd_ * e - Fe_paper);
+        // Eigen::Matrix<float, 6, 1> u_d =
+        //     xdd_d + Md_inv_ * (Bd_ * edot + Kd_ * e - Fe_paper);
+        Eigen::Matrix<float, 6, 1> F_task;
+        F_task = (Bd_ * edot + Kd_ * e);
+        // F_task = F_task + F_int;
+        F_task = F_task;
 
         // ------------------------------------------------------------
         // Jdot*qdot는 raw finite difference를 그대로 쓰면 매우 noisy하므로
         // 저역통과 형태로 한 번 smoothing 한다.
         // ------------------------------------------------------------
-        Eigen::Matrix<float, 6, 1> Jdot_qdot = Eigen::Matrix<float, 6, 1>::Zero();
-        if (has_prev_J_dbic_) {
-            Eigen::Matrix<float, 6, 6> Jdot = (s.J - J_prev_dbic_) / dt;
-            Eigen::Matrix<float, 6, 1> Jdot_qdot_raw = Jdot * qdot;
-            Jdot_qdot = 0.1f * Jdot_qdot_raw + 0.9f * Jdot_qdot_prev_;
-            Jdot_qdot_prev_ = Jdot_qdot;
-        } else {
-            Jdot_qdot_prev_.setZero();
-        }
+        //new0326
+        // Eigen::Matrix<float, 6, 1> Jdot_qdot = Eigen::Matrix<float, 6, 1>::Zero();
+        // if (has_prev_J_dbic_) {
+        //     Eigen::Matrix<float, 6, 6> Jdot = (s.J - J_prev_dbic_) / dt;
+        //     Eigen::Matrix<float, 6, 1> Jdot_qdot_raw = Jdot * qdot;
+        //     Jdot_qdot = 0.1f * Jdot_qdot_raw + 0.9f * Jdot_qdot_prev_;
+        //     Jdot_qdot_prev_ = Jdot_qdot;
+        // } else {
+        //     Jdot_qdot_prev_.setZero();
+        // }
 
-        J_prev_dbic_ = s.J;
-        has_prev_J_dbic_ = true;
+        // J_prev_dbic_ = s.J;
+        // has_prev_J_dbic_ = true;
 
         // ------------------------------------------------------------
         // exact inverse / damped inverse를 분기하면 joint-space 해가 튄다.
@@ -666,11 +675,11 @@ namespace SKKU
 
         Eigen::Matrix<float, 6, 1> Nhat = Cmat * qdot + g;
 
-        Eigen::Matrix<float, 6, 1> tau =
-            Hhat * J_inv * (u_d - Jdot_qdot)
-            + Nhat
-            + s.J.transpose() * Fe_paper;
-
+        // Eigen::Matrix<float, 6, 1> tau =
+        //     Hhat * J_inv * (u_d - Jdot_qdot)
+        //     + Nhat
+        //     + s.J.transpose() * Fe_paper;
+        Eigen::Matrix<float, 6, 1> tau = s.J.transpose() * F_task + Nhat;
         Eigen::Matrix<float, 6, 1> Fspring = Kd_ * e;
         Eigen::Matrix<float, 6, 1> Fdamp   = Bd_ * edot;
         Eigen::Matrix<float, 6, 1> Fdbic   = Fspring + Fdamp - Fe_paper;
@@ -1112,5 +1121,5 @@ namespace SKKU
     }
 
 
-
+    
 }
