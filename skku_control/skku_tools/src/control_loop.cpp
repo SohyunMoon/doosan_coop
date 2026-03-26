@@ -5381,7 +5381,7 @@ void ControlLoop::dataSaving() {
         logData("actual_flange_quaternion_assuming_XYZ.txt", actual_flange_quat_assuming_xyz, 4);
         logData("actual_tcp_quaternion_assuming_ZYZ.txt", actual_tcp_quat_assuming_zyz, 4);
         logData("actual_tcp_quaternion_assuming_XYZ.txt", actual_tcp_quat_assuming_xyz, 4);
-        logData("Raw_external_force.txt", Raw_external_force, NUMBER_OF_TASK);     
+        logData(".txt", Raw_external_force, NUMBER_OF_TASK);     
 
         //
         logData("filtered_acceleration.txt", filtered_accelerationj, NUMBER_OF_JOINT);

@@ -674,7 +674,7 @@ namespace SKKU
         Eigen::Matrix<float, 6, 6> J_inv = dampedPseudoInverse(s.J, 5e-3f);
 
         Eigen::Matrix<float, 6, 1> Nhat = Cmat * qdot + g;
-
+            //new0326
         // Eigen::Matrix<float, 6, 1> tau =
         //     Hhat * J_inv * (u_d - Jdot_qdot)
         //     + Nhat
