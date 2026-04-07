@@ -45,6 +45,16 @@ namespace {
             q.coeffs() *= -1.0f;
         }
     }
+    //new0330
+    inline Eigen::Quaternionf quatFromEulerZYZDeg(float z1_deg, float y_deg, float z2_deg) {
+        Eigen::AngleAxisf z1Angle(z1_deg * DEG2RAD, Eigen::Vector3f::UnitZ());
+        Eigen::AngleAxisf yAngle (y_deg  * DEG2RAD, Eigen::Vector3f::UnitY());
+        Eigen::AngleAxisf z2Angle(z2_deg * DEG2RAD, Eigen::Vector3f::UnitZ());
+
+        Eigen::Quaternionf q = z1Angle * yAngle * z2Angle;
+        return normalizeQuat(q);
+    }
+
 }
 //new0317
 namespace {
@@ -127,6 +137,11 @@ namespace {
 namespace SKKU
 {
     namespace fs = boost::filesystem;
+    // new0330 Shared debug logs consumed by ControlLoop::dataSaving()
+    extern std::atomic<float> g_ref_v_d_log[3];
+    extern std::atomic<float> g_s_v_log[3];
+    extern std::atomic<float> g_ref_w_d_log[3];
+    extern std::atomic<float> g_s_w_log[3];    
     bool PBIC::isFileInitialized_1 = false;
     bool PBIC::isFileInitialized_2 = false;
 
@@ -313,15 +328,16 @@ namespace SKKU
         M_inv = M.inverse();
 
 
-        // ------------------------------------------------------------
-        // DBIC tuning for current z-lift free-space test
-        // z translation authority를 키우고, rotation coupling은 약하게 둔다.
-        // ------------------------------------------------------------
-        Md_.setZero();
-        Bd_.setZero();
-        Kd_.setZero();
+        // // ------------------------------------------------------------
+        // // DBIC tuning for current z-lift free-space test
+        // // z translation authority를 키우고, rotation coupling은 약하게 둔다.
+        // // ------------------------------------------------------------
+        // Md_.setZero();
+        // Bd_.setZero();
+        // Kd_.setZero();
 
 
+<<<<<<< Updated upstream
         // 행렬에 들어가는 6개의 숫자들은 차례대로 [X, Y, Z, Roll, Pitch, Yaw] 축을 의미
         Md_.diagonal() << 5.0f, 5.0f, 2.0f, 0.20f, 0.20f, 0.20f;
         Kd_.diagonal() << 200.0f, 200.0f, 200.0f, 100.0f, 100.0f, 100.0f;
@@ -329,6 +345,15 @@ namespace SKKU
         for (int i = 0; i < 6; ++i) {
             Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
         }
+=======
+        // // 행렬에 들어가는 6개의 숫자들은 차례대로 [X, Y, Z, Roll, Pitch, Yaw] 축을 의미
+        // Md_.diagonal() << 5.0f, 5.0f, 2.0f, 0.20f, 0.20f, 0.20f;
+        // Kd_.diagonal() << 200.0f, 200.0f, 200.0f, 20.0f, 20.0f, 20.0f;
+
+        // for (int i = 0; i < 6; ++i) {
+        //     Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
+        // }
+>>>>>>> Stashed changes
 
         Md_inv_ = Md_.inverse();
 
@@ -355,7 +380,10 @@ namespace SKKU
     // Kd_(3,3) = 5.0f;   Kd_(4,4) = 5.0f;   Kd_(5,5) = 5.0f;
 
     // Md_inv_ = Md_.inverse();
-
+        // Kd_.diagonal() << 10000.0f, 8000.0f, 8000.0f, 200.0f, 200.0f, 200.0f;
+        // Bd_.diagonal() << 1000.0f, 1000.0f, 1000.0f, 40.0f, 40.0f, 40.0f;
+        Kd_.diagonal() << 8000.0f, 8000.0f, 8000.0f, 200.0f, 200.0f, 200.0f;
+        Bd_.diagonal() << 1000.0f, 1000.0f, 1000.0f, 40.0f, 40.0f, 40.0f;        
         dt = static_cast<float>(loop_time) / 1000.0f;
     }
 
@@ -383,7 +411,10 @@ namespace SKKU
     //     Fe_filt_dbic_.setZero();
     //     // Fe_filt.setZero(); // <--- Fe_filt 로 수정!
     // }
-
+    //new0401
+    static Eigen::Quaternionf g_qF_prev = Eigen::Quaternionf::Identity();
+    static bool g_is_qF_init = false;
+    //
     void PBIC::resetDBICControllerState()
     {
         has_prev_J_dbic_ = false;
@@ -397,55 +428,74 @@ namespace SKKU
         fe_bias_ready_dbic_ = false;
 
         tau_prev_dbic_.setZero();
+        //new0401
+        g_is_qF_init = false;
+        g_qF_prev = Eigen::Quaternionf::Identity();
     }
 
     //new0317
-    //new0322
-    // TaskState PBIC::getTaskState(const LPRT_OUTPUT_DATA_LIST robot_state,
-    //                          TaskPointMode task_point_mode,
-    //                          const Eigen::Isometry3f& T_flange_tcp) {
-    // TaskState s;
+    TaskState PBIC::getTaskState(const LPRT_OUTPUT_DATA_LIST robot_state,
+                             TaskPointMode task_point_mode,
+                             const Eigen::Isometry3f& T_flange_tcp) {
+    TaskState s;
 
-    // Eigen::Vector3f pF;
-    // pF << robot_state->actual_flange_position[0] * 1e-3f,
-    //       robot_state->actual_flange_position[1] * 1e-3f,
-    //       robot_state->actual_flange_position[2] * 1e-3f;
+    Eigen::Vector3f pF;
+    pF << robot_state->actual_flange_position[0] * 1e-3f,
+          robot_state->actual_flange_position[1] * 1e-3f,
+          robot_state->actual_flange_position[2] * 1e-3f;
+    //new0330      
 
     // float (*rotm_ptr)[3] = Drfl_.get_current_rotm();
     // Eigen::Quaternionf qF = quatFromRotm(rotm_ptr);
 
-    // Eigen::Isometry3f T_B_F = Eigen::Isometry3f::Identity();
-    // T_B_F.linear() = qF.toRotationMatrix();
-    // T_B_F.translation() = pF;
+    Eigen::Isometry3f T_B_F = Eigen::Isometry3f::Identity();
+    //new0330
+    Eigen::Quaternionf qF = quatFromEulerZYZDeg(
+        robot_state->actual_flange_position[3],
+        robot_state->actual_flange_position[4],
+        robot_state->actual_flange_position[5]
+    );
+    //new0401
+    if (!g_is_qF_init) {
+        g_qF_prev = qF;
+        g_is_qF_init = true;
+    } else {
+        alignQuatHemisphere(qF, g_qF_prev);
+        g_qF_prev = qF; // 다음 프레임을 위해 저장
+    }
 
-    // Eigen::Isometry3f T_B_TCP = T_B_F * T_flange_tcp;
-    // Eigen::Vector3f r_F_to_TCP = T_B_TCP.translation() - T_B_F.translation();
 
-    // Eigen::Vector3f vF;
-    // vF << robot_state->actual_flange_velocity[0] * 1e-3f,
-    //       robot_state->actual_flange_velocity[1] * 1e-3f,
-    //       robot_state->actual_flange_velocity[2] * 1e-3f;
+    T_B_F.translation() = pF;
 
-    // Eigen::Vector3f wF;
-    // wF << robot_state->actual_flange_velocity[3] * DEG2RAD,
-    //       robot_state->actual_flange_velocity[4] * DEG2RAD,
-    //       robot_state->actual_flange_velocity[5] * DEG2RAD;
+    Eigen::Isometry3f T_B_TCP = T_B_F * T_flange_tcp;
+    Eigen::Vector3f r_F_to_TCP = T_B_TCP.translation() - T_B_F.translation();
 
-    // if (task_point_mode == TaskPointMode::kTCP) {
-    //     s.p = T_B_TCP.translation();
-    //     s.q = Eigen::Quaternionf(T_B_TCP.linear());
-    //     s.q.normalize();
-    //     s.v = vF + wF.cross(r_F_to_TCP);
-    //     s.w = wF;
-    // } else {
-    //     s.p = T_B_F.translation();
-    //     s.q = qF;
-    //     s.q.normalize();
-    //     s.v = vF;
-    //     s.w = wF;
-    // }
+    Eigen::Vector3f vF;
+    vF << robot_state->actual_flange_velocity[0] * 1e-3f,
+          robot_state->actual_flange_velocity[1] * 1e-3f,
+          robot_state->actual_flange_velocity[2] * 1e-3f;
 
-    // Eigen::Matrix<float, 6, 6> J_raw = mapMat6(robot_state->jacobian_matrix);
+    Eigen::Vector3f wF;
+    wF << robot_state->actual_flange_velocity[3] * DEG2RAD,
+          robot_state->actual_flange_velocity[4] * DEG2RAD,
+          robot_state->actual_flange_velocity[5] * DEG2RAD;
+
+    if (task_point_mode == TaskPointMode::kTCP) {
+        s.p = T_B_TCP.translation();
+        // s.q = Eigen::Quaternionf(T_B_TCP.linear());
+        s.q = qF;
+        s.q.normalize();
+        s.v = vF + wF.cross(r_F_to_TCP);
+        s.w = wF;
+    } else {
+        s.p = T_B_F.translation();
+        s.q = qF;
+        s.q.normalize();
+        s.v = vF;
+        s.w = wF;
+    }
+
+    Eigen::Matrix<float, 6, 6> J_raw = mapMat6(robot_state->jacobian_matrix);
 
     // if (kRawJacobianIsFlange) {
     //     if (task_point_mode == TaskPointMode::kTCP) {
@@ -460,127 +510,53 @@ namespace SKKU
     //         s.J = twistShiftMatrix(-r_F_to_TCP) * J_raw;
     //     }
     // }
-    TaskState PBIC::getTaskState(const LPRT_OUTPUT_DATA_LIST robot_state,
-                             TaskPointMode task_point_mode,
-                             const Eigen::Isometry3f& T_flange_tcp)
-{
-    TaskState s;
 
-    // ------------------------------------------------------------
-    // Flange pose from robot state (position + RPY)
-    // 현재는 flange 기준 실험이므로 actual_flange_* 를 일관되게 사용
-    // ------------------------------------------------------------
-    Eigen::Vector3f pF;
-    pF << robot_state->actual_flange_position[0] * 1e-3f,
-          robot_state->actual_flange_position[1] * 1e-3f,
-          robot_state->actual_flange_position[2] * 1e-3f;
-
-    Eigen::Quaternionf qF =
-        quatFromEulerDeg(robot_state->actual_flange_position[3],
-                         robot_state->actual_flange_position[4],
-                         robot_state->actual_flange_position[5]);
-
-    Eigen::Vector3f vF;
-    vF << robot_state->actual_flange_velocity[0] * 1e-3f,
-          robot_state->actual_flange_velocity[1] * 1e-3f,
-          robot_state->actual_flange_velocity[2] * 1e-3f;
-
-    Eigen::Vector3f wF;
-    wF << robot_state->actual_flange_velocity[3] * DEG2RAD,
-          robot_state->actual_flange_velocity[4] * DEG2RAD,
-          robot_state->actual_flange_velocity[5] * DEG2RAD;
-
-    Eigen::Matrix<float, 6, 6> J_raw = mapMat6(robot_state->jacobian_matrix);
-
-    // 현재는 TCP가 없으므로 controller의 external_tcp_force를 flange wrench로 간주
-    Eigen::Matrix<float, 6, 1> wrench_flange = Eigen::Matrix<float, 6, 1>::Zero();
-    for (int i = 0; i < 6; ++i) {
-        wrench_flange(i) = robot_state->external_tcp_force[i];
-    }
-
-    // ------------------------------------------------------------
-    // flange mode: actual_flange_* 기준으로 끝까지 일관되게 사용
-    // ------------------------------------------------------------
-    if (task_point_mode == TaskPointMode::kFlange) {
-        s.p = pF;
-        s.q = qF;
-        s.q.normalize();
-
-        s.v = vF;
-        s.w = wF;
-
-        s.J = J_raw;
-        s.F_env_on_robot = wrench_flange;
-
-        return s;
-    }
-
-    // ------------------------------------------------------------
-    // TCP mode (future use)
-    // flange pose + code-side TCP offset으로 TCP state 구성
-    // ------------------------------------------------------------
-    Eigen::Isometry3f T_B_F = Eigen::Isometry3f::Identity();
-    T_B_F.linear() = qF.toRotationMatrix();
-    T_B_F.translation() = pF;
-
-    Eigen::Isometry3f T_B_TCP = T_B_F * T_flange_tcp;
-    Eigen::Vector3f r_F_to_TCP = T_B_TCP.translation() - T_B_F.translation();
-
-    s.p = T_B_TCP.translation();
-    s.q = Eigen::Quaternionf(T_B_TCP.linear());
-    s.q.normalize();
+    // // external_tcp_force는 TCP point, base/world frame, environment-on-robot 가정
+    // Eigen::Matrix<float, 6, 1> wrench_tcp;
 
     if (kRawJacobianIsFlange) {
-        s.J = twistShiftMatrix(r_F_to_TCP) * J_raw;
+        if (task_point_mode == TaskPointMode::kTCP) {
+            s.J = twistShiftMatrix(r_F_to_TCP) * J_raw;
+        } else {
+            s.J = J_raw;
+        }
     } else {
-        s.J = J_raw;
+        if (task_point_mode == TaskPointMode::kTCP) {
+            s.J = J_raw;
+        } else {
+            s.J = twistShiftMatrix(-r_F_to_TCP) * J_raw;
+        }
     }
 
-    Eigen::Matrix<float, 6, 1> qdot_task =
+    // ------------------------------------------------------------
+    // DBIC는 SI 단위(m, rad, m/s, rad/s)로 계산한다.
+    // actual_joint_velocity는 raw joint unit이므로 rad/s로 변환해서 사용
+    // ------------------------------------------------------------
+        Eigen::Matrix<float, 6, 1> qdot_task =
         mapJointVelDegToRad(robot_state->actual_joint_velocity);
 
     Eigen::Matrix<float, 6, 1> twist_task = s.J * qdot_task;
-    s.v = twist_task.head<3>();
-    s.w = twist_task.tail<3>();
 
-    // flange wrench -> tcp wrench shift
-    s.F_env_on_robot.head<3>() = wrench_flange.head<3>();
-    s.F_env_on_robot.tail<3>() =
-        wrench_flange.tail<3>() - r_F_to_TCP.cross(wrench_flange.head<3>());
+    s.v = twist_task.head<3>();   // [m/s]
+    s.w = twist_task.tail<3>();   // [rad/s]
+
+    // external_tcp_force는 TCP point, base/world frame, environment-on-robot 가정
+    Eigen::Matrix<float, 6, 1> wrench_tcp;
+
+    for (int i = 0; i < 6; ++i) {
+        wrench_tcp(i) = robot_state->external_tcp_force[i];
+    }
+
+    if (task_point_mode == TaskPointMode::kTCP) {
+        s.F_env_on_robot = wrench_tcp;
+    } else {
+        s.F_env_on_robot.head<3>() = wrench_tcp.head<3>();
+        s.F_env_on_robot.tail<3>() =
+            wrench_tcp.tail<3>() + r_F_to_TCP.cross(wrench_tcp.head<3>());
+    }
 
     return s;
-}
-
-    // // ------------------------------------------------------------
-    // // DBIC는 SI 단위(m, rad, m/s, rad/s)로 계산한다.
-    // // actual_joint_velocity는 raw joint unit이므로 rad/s로 변환해서 사용
-    // // ------------------------------------------------------------
-    //     Eigen::Matrix<float, 6, 1> qdot_task =
-    //     mapJointVelDegToRad(robot_state->actual_joint_velocity);
-
-    // Eigen::Matrix<float, 6, 1> twist_task = s.J * qdot_task;
-
-    // s.v = twist_task.head<3>();   // [m/s]
-    // s.w = twist_task.tail<3>();   // [rad/s]
-
-    // // controller에서 tool offset이 비활성이라면 external_tcp_force는 사실상 flange wrench로 본다.
-    // Eigen::Matrix<float, 6, 1> wrench_flange = Eigen::Matrix<float, 6, 1>::Zero();
-
-    // for (int i = 0; i < 6; ++i) {
-    //     wrench_flange(i) = robot_state->external_tcp_force[i];
-    // }
-
-    // if (task_point_mode == TaskPointMode::kTCP) {
-    //     // wrench at TCP = wrench at flange shifted to TCP
-    //     s.F_env_on_robot.head<3>() = wrench_flange.head<3>();
-    //     s.F_env_on_robot.tail<3>() =
-    //         wrench_flange.tail<3>() - r_F_to_TCP.cross(wrench_flange.head<3>());
-    // } else {
-    //     s.F_env_on_robot = wrench_flange;
-    // }
-
-    // return s;
-    // }
+    }
     
     Torques PBIC::ControlGeneratorDBIC(const TaskRef& ref,
                                     const LPRT_OUTPUT_DATA_LIST robot_state,
@@ -606,19 +582,19 @@ namespace SKKU
         Eigen::Matrix<float, 6, 1> Fe_meas = -s.F_env_on_robot;
         Eigen::Matrix<float, 6, 1> Fe_paper = Eigen::Matrix<float, 6, 1>::Zero();
 
-        if (!fe_bias_ready_dbic_) {
-            Fe_bias_accum_dbic_ += Fe_meas;
-            Fe_bias_count_dbic_++;
+        // if (!fe_bias_ready_dbic_) {
+        //     Fe_bias_accum_dbic_ += Fe_meas;
+        //     Fe_bias_count_dbic_++;
 
-            if (Fe_bias_count_dbic_ >= 50) {   // 약 0.2초 @ 250Hz
-                Fe_bias_dbic_ = Fe_bias_accum_dbic_ / static_cast<float>(Fe_bias_count_dbic_);
-                fe_bias_ready_dbic_ = true;
-                Fe_filt_dbic_.setZero();
-            }
-        } else {
-            Fe_meas -= Fe_bias_dbic_;
-            Fe_filt_dbic_ = 0.05f * Fe_meas + 0.95f * Fe_filt_dbic_;
-            Fe_paper = Fe_filt_dbic_;
+        //     if (Fe_bias_count_dbic_ >= 50) {   // 약 0.2초 @ 250Hz
+        //         Fe_bias_dbic_ = Fe_bias_accum_dbic_ / static_cast<float>(Fe_bias_count_dbic_);
+        //         fe_bias_ready_dbic_ = true;
+        //         Fe_filt_dbic_.setZero();
+        //     }
+        // } else {
+        //     Fe_meas -= Fe_bias_dbic_;
+        //     Fe_filt_dbic_ = 0.05f * Fe_meas + 0.95f * Fe_filt_dbic_;
+        //     Fe_paper = Fe_filt_dbic_;
 
             // 외력 = 0 experiment setting
             // Fe_paper = Eigen::Matrix<float, 6, 1>::Zero();
@@ -626,12 +602,86 @@ namespace SKKU
 
         Eigen::Matrix<float, 6, 1> e    = Eigen::Matrix<float, 6, 1>::Zero();
         Eigen::Matrix<float, 6, 1> edot = Eigen::Matrix<float, 6, 1>::Zero();
+        Eigen::Matrix<float, 6, 1> edot_raw = Eigen::Matrix<float, 6, 1>::Zero();        
 
         e.head<3>()    = ref.p_d - s.p;
-        edot.head<3>() = ref.v_d - s.v;
+        edot_raw.head<3>() = ref.v_d - s.v;
 
         e.tail<3>()    = quatLogError(ref.q_d, s.q);
+<<<<<<< Updated upstream
         edot.tail<3>() = ref.w_d - s.w;
+=======
+        edot_raw.tail<3>() = ref.w_d - s.w;
+        // new0330 Debug logs for edot decomposition
+
+        // ------------------------------------------------------------
+        // edot filtering
+        //   1) slew-rate limit
+        //   2) deadband
+        //   3) low-pass filter
+        // ------------------------------------------------------------
+        static bool edot_filter_init = false;
+        static Eigen::Matrix<float, 6, 1> edot_prev_limited = Eigen::Matrix<float, 6, 1>::Zero();
+        static Eigen::Matrix<float, 6, 1> edot_filt_state   = Eigen::Matrix<float, 6, 1>::Zero();
+
+        Eigen::Matrix<float, 6, 1> edot_limited = edot_raw;
+
+        // 작은 떨림 제거용 deadband
+        Eigen::Matrix<float, 6, 1> edot_deadband;
+        edot_deadband << 0.0015f, 0.0015f, 0.0015f,
+                        0.0100f, 0.0100f, 0.0100f;
+
+        // 축별 LPF 계수 (작을수록 더 부드러움)
+        Eigen::Matrix<float, 6, 1> edot_alpha;
+        edot_alpha << 0.12f, 0.12f, 0.12f,
+                    0.08f, 0.08f, 0.08f;
+
+        // edot 변화율 제한 (단위: linear = m/s^2, angular = rad/s^2)
+        const float linear_edot_slew_rate  = 5.0f;
+        const float angular_edot_slew_rate = 20.0f;
+
+        Eigen::Matrix<float, 6, 1> edot_delta_limit;
+        edot_delta_limit << linear_edot_slew_rate  * dt,
+                            linear_edot_slew_rate  * dt,
+                            linear_edot_slew_rate  * dt,
+                            angular_edot_slew_rate * dt,
+                            angular_edot_slew_rate * dt,
+                            angular_edot_slew_rate * dt;
+
+        if (!edot_filter_init) {
+            edot_prev_limited = edot_raw;
+            edot_filt_state   = edot_raw;
+            edot_filter_init  = true;
+        }
+
+        for (int i = 0; i < 6; ++i) {
+            float delta = edot_raw(i) - edot_prev_limited(i);
+
+            if (delta >  edot_delta_limit(i)) delta =  edot_delta_limit(i);
+            if (delta < -edot_delta_limit(i)) delta = -edot_delta_limit(i);
+
+            edot_limited(i) = edot_prev_limited(i) + delta;
+
+            if (std::fabs(edot_limited(i)) < edot_deadband(i)) {
+                edot_limited(i) = 0.0f;
+            }
+
+            edot_filt_state(i) =
+                edot_alpha(i) * edot_limited(i) +
+                (1.0f - edot_alpha(i)) * edot_filt_state(i);
+
+            edot(i) = edot_filt_state(i);
+        }
+
+        edot_prev_limited = edot_limited;            
+
+        for (int i = 0; i < 3; ++i) {
+            g_ref_v_d_log[i].store(ref.v_d(i), std::memory_order_relaxed);
+            g_s_v_log[i].store(s.v(i), std::memory_order_relaxed);
+            g_ref_w_d_log[i].store(ref.w_d(i), std::memory_order_relaxed);
+            g_s_w_log[i].store(s.w(i), std::memory_order_relaxed);
+        }        
+>>>>>>> Stashed changes
 
         Eigen::Matrix<float, 6, 1> xdd_d = Eigen::Matrix<float, 6, 1>::Zero();
         xdd_d.head<3>() = ref.a_d;
@@ -666,14 +716,101 @@ namespace SKKU
 
         Eigen::Matrix<float, 6, 1> Nhat = Cmat * qdot + g;
 
+<<<<<<< Updated upstream
         Eigen::Matrix<float, 6, 1> tau =
             Hhat * J_inv * (u_d - Jdot_qdot)
             + Nhat
             + s.J.transpose() * Fe_paper;
 
+=======
+        // Eigen::Matrix<float, 6, 1> tau =
+        //     Hhat * J_inv * (u_d - Jdot_qdot)
+        //     + Nhat
+        //     + s.J.transpose() * Fe_paper;
+        //new0330
+
+        Eigen::Map<const Eigen::Matrix<float, 6, 1>> trq_raw(robot_state->external_joint_torque);
+
+        Eigen::Matrix<float, 6, 1> Fext_raw = -1.0f * J_inv.transpose() * trq_raw;
+
+        float Fsensor[6] = {17.09f, -15.47f, 1.50f, 3.52f, -1.32f, 2.06f};
+        Eigen::Map<const Eigen::Matrix<float, 6, 1>> Fsensoroffset(Fsensor);
+        // Fext_raw = Fext_raw - Fsensoroffset;
+        Fext_raw = Fext_raw;
+
+        // --------------------------------------------------
+        // spike suppression + LPF
+        // --------------------------------------------------
+        static bool fext_filter_init = false;
+        static Eigen::Matrix<float, 6, 1> Fext_prev = Eigen::Matrix<float, 6, 1>::Zero();
+        static Eigen::Matrix<float, 6, 1> Fext_filt = Eigen::Matrix<float, 6, 1>::Zero();
+
+        Eigen::Matrix<float, 6, 1> Fext = Fext_raw;
+
+        // 축별 절대 제한값 [Fx,Fy,Fz,Mx,My,Mz]
+        // 시작은 보수적으로 두고 나중에 조정
+        Eigen::Matrix<float, 6, 1> fext_abs_limit;
+        fext_abs_limit << 400.0f, 400.0f, 200.0f, 50.0f, 50.0f, 50.0f;
+
+        // 변화율 제한값 [N/s, Nm/s]
+        const float force_slew_rate  = 2000.0f;  // translational
+        const float torque_slew_rate = 200.0f;   // rotational
+
+        Eigen::Matrix<float, 6, 1> fext_delta_limit;
+        fext_delta_limit << force_slew_rate * dt,
+                            force_slew_rate * dt,
+                            force_slew_rate * dt,
+                            torque_slew_rate * dt,
+                            torque_slew_rate * dt,
+                            torque_slew_rate * dt;
+
+        if (!fext_filter_init) {
+            Fext_prev = Fext;
+            Fext_filt = Fext;
+            fext_filter_init = true;
+        }
+
+        // 1) 프레임 간 급격한 점프 제한
+        for (int i = 0; i < 6; ++i) {
+            float delta = Fext(i) - Fext_prev(i);
+
+            if (delta >  fext_delta_limit(i)) delta =  fext_delta_limit(i);
+            if (delta < -fext_delta_limit(i)) delta = -fext_delta_limit(i);
+
+            Fext(i) = Fext_prev(i) + delta;
+
+            // 2) 절대 크기 제한
+            if (Fext(i) >  fext_abs_limit(i)) Fext(i) =  fext_abs_limit(i);
+            if (Fext(i) < -fext_abs_limit(i)) Fext(i) = -fext_abs_limit(i);
+        }
+
+        // 3) 저역통과필터
+        const float alpha_fext = 0.80f; // 작을수록 더 부드러움
+        Fext_filt = alpha_fext * Fext + (1.0f - alpha_fext) * Fext_filt;
+
+        Fext_prev = Fext;
+
+        //
+>>>>>>> Stashed changes
         Eigen::Matrix<float, 6, 1> Fspring = Kd_ * e;
         Eigen::Matrix<float, 6, 1> Fdamp   = Bd_ * edot;
         Eigen::Matrix<float, 6, 1> Fdbic   = Fspring + Fdamp - Fe_paper;
+        Eigen::Matrix<float, 6, 1> Fimp   = Fspring + Fdamp;
+        // Eigen::Matrix<float, 6, 1> Fext   = -1 * J_inv.transpose()*trq_raw;
+        // float Fsesnor[6] = {17.09f, -15.47f, 1.50f, 3.52f , -1.32f, 2.06f};
+        // Eigen::Map<const Eigen::Matrix<float, 6, 1>>Fsensoroffset(Fsesnor);
+        // Fext = Fext-Fsensoroffset;
+        //new0330
+        // Eigen::Matrix<float, 6, 1> tau =
+        // s.J.transpose()*(Fimp)
+        // + Nhat
+        // + Fext;
+
+
+
+        Eigen::Matrix<float, 6, 1> tau =
+        s.J.transpose()*(Fimp-Fext_filt)
+        + Nhat;
 
         auto clampf = [](float v, float lo, float hi) {
             return (v < lo) ? lo : ((v > hi) ? hi : v);
@@ -684,12 +821,16 @@ namespace SKKU
             1500.0f, 1500.0f, 1200.0f, 250.0f, 250.0f, 250.0f
         };
 
+        
         for (int i = 0; i < 6; ++i) {
             F.F_DBIC[i] = Fdbic(i);
             F.F_rest[i] = Fspring(i);
             F.F_coriolis[i] = Fdamp(i);
-            F.Fext[i] = s.F_env_on_robot(i);
-            F.Fimp[i] = 0.0f;
+            // F.Fext[i] = s.F_env_on_robot(i);
+            F.Fext[i] = Fext_filt(i);
+            F.Fimp[i] = Fimp(i);
+            F.error[i] = e(i);
+            F.error_dot[i] = edot(i);
 
             const float max_delta = tau_rate_limit_per_sec[i] * dt;
             tau(i) = clampf(tau(i),
@@ -799,7 +940,7 @@ namespace SKKU
         Eigen::Map<Eigen::Matrix<float, 6, 1>> xPrev(prev.xPrev.data());
         Eigen::Map<Eigen::Matrix<float, 6, 1>> vPrev(prev.vPrev.data());
         Eigen::Map<Eigen::Matrix<float, 6, 1>> qPrev(prev.qPrev.data());
-
+    
         Eigen::Map<const Eigen::Matrix<float, 6, 1>> trq_raw(robot_state->actual_joint_torque);
         Eigen::Map<Eigen::Matrix<float, 6, 1>> trq_ext(robot_state->external_joint_torque);
         Eigen::Map<const Eigen::Matrix<float, 6, 1>> trq_g(robot_state->gravity_torque);
@@ -844,6 +985,7 @@ namespace SKKU
             // F_ext(i) = F_box[i];
             // 노이즈로 인한 토크 발산을 막기 위해 로우패스 필터(LPF) 적용 복구
             F_ext(i) = 0.1f * F_box[i] + 0.9f * F_extPrev(i);
+            F_ext(i) = 0;
         }
 
         Eigen::Matrix<float, 1, 6> q_input_matrix;
@@ -939,6 +1081,7 @@ namespace SKKU
         // PBIC outer impedance model
         // xdd_m = xdd_d + M^{-1}[ B(xd_dot - x_m_dot) + K(xd - x_m) - F_int ]
         // F_ext는 environment-on-robot 기준으로 사용
+
         imp_C = M_inv * (M * acc_euler + B * vel_euler + K * pos_euler - F_ext);
 
         rungeKutta(t_start, imp.pos_m, imp.vel_m, imp_C);

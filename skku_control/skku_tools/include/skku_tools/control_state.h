@@ -173,6 +173,9 @@ public:
     float F_PBIC[6] = {0};
     float F_rest[6] = {0};
     float F_coriolis[6] = {0};
+    float F_task[6] = {0};
+    float error[6] = {0};
+    float error_dot[6] = {0};
 };
 
 class Errors {
