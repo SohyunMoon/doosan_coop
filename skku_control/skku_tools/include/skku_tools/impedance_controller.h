@@ -170,7 +170,24 @@ namespace SKKU {
             const LPRT_OUTPUT_DATA_LIST robot_state,
             Errors& error,
             int count);
+        //new0407
+        std::pair<std::array<float, 6>, bool> MotionGeneratorPBIC(
+            const TaskRef& ref,
+            const LPRT_OUTPUT_DATA_LIST robot_state,
+            TaskPointMode task_point_mode,
+            const Eigen::Isometry3f& T_flange_tcp,
+            int& sol_space);
 
+        Torques ControlGeneratorPBIC(
+            const Desired desired,
+            const LPRT_OUTPUT_DATA_LIST robot_state,
+            Errors& error,
+            int count);
+
+        void resetPBICControllerState(
+            const TaskState& s0,
+            const LPRT_OUTPUT_DATA_LIST robot_state);            
+        //
         // ---------------- DBIC branch ----------------
         TaskState getTaskState(
             const LPRT_OUTPUT_DATA_LIST robot_state,
@@ -279,7 +296,28 @@ namespace SKKU {
         bool has_prev_J_dbic_ = false;
         Eigen::Matrix<float, 6, 1> tau_prev_dbic_ = Eigen::Matrix<float, 6, 1>::Zero();
         // -------------------------------------------------------
+        //new0407
+        // ---------------- PBIC model state (task space, SI + quaternion) ----------------
+        Eigen::Vector3f pbic_p_m_ = Eigen::Vector3f::Zero();
+        Eigen::Vector3f pbic_v_m_ = Eigen::Vector3f::Zero();
+        Eigen::Vector3f pbic_a_m_ = Eigen::Vector3f::Zero();
 
+        Eigen::Quaternionf pbic_q_m_ = Eigen::Quaternionf::Identity();
+        Eigen::Vector3f pbic_w_m_ = Eigen::Vector3f::Zero();
+        Eigen::Vector3f pbic_alpha_m_ = Eigen::Vector3f::Zero();
+
+        Eigen::Matrix<float, 6, 1> pbic_Fext_prev_ = Eigen::Matrix<float, 6, 1>::Zero();
+        Eigen::Matrix<float, 6, 1> pbic_Fext_filt_ = Eigen::Matrix<float, 6, 1>::Zero();
+
+        bool pbic_fext_filter_init_ = false;
+        bool pbic_model_initialized_ = false;
+
+        std::array<float, 3> pbic_prev_rpy_deg_ = {0.0f, 0.0f, 0.0f};
+        bool pbic_prev_rpy_init_ = false;
+
+        int pbic_singularity_counter_ = 0;
+        // -------------------------------------------------------------------------------
+        //
         float imp_m;
         float imp_k;
         float imp_b; 

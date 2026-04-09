@@ -132,8 +132,98 @@ namespace {
         return J.transpose() * (J * J.transpose() + lambda * lambda * I).inverse();
     }
 }//
+//new0407
+namespace {
+    // constexpr float DEG2RAD = static_cast<float>(M_PI) / 180.0f;
+    constexpr float RAD2DEG = 180.0f / static_cast<float>(M_PI);
 
+    // inline Eigen::Quaternionf normalizeQuat(Eigen::Quaternionf q) {
+    //     if (q.norm() < 1e-6f) {
+    //         return Eigen::Quaternionf::Identity();
+    //     }
+    //     q.normalize();
+    //     return q;
+    // }
 
+    // inline Eigen::Quaternionf quatFromEulerDeg(float roll_deg, float pitch_deg, float yaw_deg) {
+    //     Eigen::AngleAxisf rollAngle (roll_deg  * DEG2RAD, Eigen::Vector3f::UnitX());
+    //     Eigen::AngleAxisf pitchAngle(pitch_deg * DEG2RAD, Eigen::Vector3f::UnitY());
+    //     Eigen::AngleAxisf yawAngle  (yaw_deg   * DEG2RAD, Eigen::Vector3f::UnitZ());
+
+    //     Eigen::Quaternionf q = yawAngle * pitchAngle * rollAngle;
+    //     return normalizeQuat(q);
+    // }
+
+    // inline void alignQuatHemisphere(Eigen::Quaternionf& q, const Eigen::Quaternionf& ref) {
+    //     if (q.coeffs().dot(ref.coeffs()) < 0.0f) {
+    //         q.coeffs() *= -1.0f;
+    //     }
+    // }
+
+    // inline Eigen::Quaternionf quatFromEulerZYZDeg(float z1_deg, float y_deg, float z2_deg) {
+    //     Eigen::AngleAxisf z1Angle(z1_deg * DEG2RAD, Eigen::Vector3f::UnitZ());
+    //     Eigen::AngleAxisf yAngle (y_deg  * DEG2RAD, Eigen::Vector3f::UnitY());
+    //     Eigen::AngleAxisf z2Angle(z2_deg * DEG2RAD, Eigen::Vector3f::UnitZ());
+
+    //     Eigen::Quaternionf q = z1Angle * yAngle * z2Angle;
+    //     return normalizeQuat(q);
+    // }
+
+    inline float unwrapNearDeg(float angle_deg, float ref_deg) {
+        while (angle_deg - ref_deg > 180.0f) angle_deg -= 360.0f;
+        while (angle_deg - ref_deg < -180.0f) angle_deg += 360.0f;
+        return angle_deg;
+    }
+
+    inline std::array<float, 3> quatToEulerDegZYZ(const Eigen::Quaternionf& q_in) {
+        Eigen::Quaternionf q = normalizeQuat(q_in);
+
+        // ZYZ Euler 변환
+        Eigen::Vector3f euler_zyz = q.toRotationMatrix().eulerAngles(2, 1, 2); // Z-Y'-Z'' 순서
+
+        return {
+            euler_zyz[0] * RAD2DEG,   // 첫 번째 Z 회전 (roll)
+            euler_zyz[1] * RAD2DEG,   // Y 회전 (pitch)
+            euler_zyz[2] * RAD2DEG    // 두 번째 Z 회전 (yaw)
+        };
+    }
+
+    inline std::array<float, 3> quatToEulerDegZYZNear(
+        const Eigen::Quaternionf& q_in,
+        float ref_roll_deg,
+        float ref_pitch_deg,
+        float ref_yaw_deg) {
+
+        // ZYZ Euler로 변환
+        auto rpy = quatToEulerDegZYZ(q_in);
+        
+        // reference 값에 가까운 범위로 조정
+        rpy[0] = unwrapNearDeg(rpy[0], ref_roll_deg);    // 첫 번째 Z 회전 (roll)
+        rpy[1] = unwrapNearDeg(rpy[1], ref_pitch_deg);   // Y 회전 (pitch)
+        rpy[2] = unwrapNearDeg(rpy[2], ref_yaw_deg);     // 두 번째 Z 회전 (yaw)
+
+        return rpy;
+    }
+
+    inline Eigen::Quaternionf integrateQuatBody(
+        const Eigen::Quaternionf& q_in,
+        const Eigen::Vector3f& w_body,
+        float dt_sec) {
+        Eigen::Quaternionf q = normalizeQuat(q_in);
+
+        Eigen::Vector3f theta = w_body * dt_sec;
+        const float angle = theta.norm();
+
+        if (angle > 1e-9f) {
+            Eigen::AngleAxisf aa(angle, theta / angle);
+            q = q * Eigen::Quaternionf(aa);   // body-frame integration
+            q.normalize();
+        }
+
+        return q;
+    }
+}
+//
 namespace SKKU
 {
     namespace fs = boost::filesystem;
@@ -337,15 +427,6 @@ namespace SKKU
         // Kd_.setZero();
 
 
-<<<<<<< Updated upstream
-        // 행렬에 들어가는 6개의 숫자들은 차례대로 [X, Y, Z, Roll, Pitch, Yaw] 축을 의미
-        Md_.diagonal() << 5.0f, 5.0f, 2.0f, 0.20f, 0.20f, 0.20f;
-        Kd_.diagonal() << 200.0f, 200.0f, 200.0f, 100.0f, 100.0f, 100.0f;
-
-        for (int i = 0; i < 6; ++i) {
-            Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
-        }
-=======
         // // 행렬에 들어가는 6개의 숫자들은 차례대로 [X, Y, Z, Roll, Pitch, Yaw] 축을 의미
         // Md_.diagonal() << 5.0f, 5.0f, 2.0f, 0.20f, 0.20f, 0.20f;
         // Kd_.diagonal() << 200.0f, 200.0f, 200.0f, 20.0f, 20.0f, 20.0f;
@@ -353,7 +434,6 @@ namespace SKKU
         // for (int i = 0; i < 6; ++i) {
         //     Bd_(i, i) = 2.0f * std::sqrt(Md_(i, i) * Kd_(i, i));
         // }
->>>>>>> Stashed changes
 
         Md_inv_ = Md_.inverse();
 
@@ -432,6 +512,402 @@ namespace SKKU
         g_is_qF_init = false;
         g_qF_prev = Eigen::Quaternionf::Identity();
     }
+    //new0407
+
+    void PBIC::resetPBICControllerState(const TaskState& s0,
+                                        const LPRT_OUTPUT_DATA_LIST robot_state)
+    {
+        pbic_p_m_ = s0.p;
+        pbic_v_m_.setZero();
+        pbic_a_m_.setZero();
+
+        pbic_q_m_ = s0.q;
+        pbic_q_m_.normalize();
+        pbic_w_m_.setZero();
+        pbic_alpha_m_.setZero();
+
+        pbic_Fext_prev_.setZero();
+        pbic_Fext_filt_.setZero();
+        pbic_fext_filter_init_ = false;
+        pbic_model_initialized_ = true;
+
+        pbic_prev_rpy_deg_[0] = 0.0f;
+        pbic_prev_rpy_deg_[1] = 0.0f;
+        pbic_prev_rpy_deg_[2] = 0.0f;
+        pbic_prev_rpy_init_ = false;
+
+        pbic_singularity_counter_ = 0;
+        count_motion = 0;
+
+        for (int i = 0; i < 6; ++i) {
+            previous_joint_command[i] = robot_state->actual_joint_position[i];
+            prev.derrPrev[i] = 0.0f;
+            errors.e[i] = 0.0f;
+            errors.de[i] = 0.0f;
+            errors.e_integral[i] = 0.0f;
+            imp.vel_m(i) = 0.0f;
+            imp.acc_m(i) = 0.0f;
+        }
+
+        auto rpy = quatToEulerDegZYZ(pbic_q_m_);
+        imp.pos_m(0) = pbic_p_m_(0) * 1000.0f;
+        imp.pos_m(1) = pbic_p_m_(1) * 1000.0f;
+        imp.pos_m(2) = pbic_p_m_(2) * 1000.0f;
+        imp.pos_m(3) = rpy[0];
+        imp.pos_m(4) = rpy[1];
+        imp.pos_m(5) = rpy[2];
+    }
+
+    Torques PBIC::ControlGeneratorPBIC(const Desired desired,
+                                    const LPRT_OUTPUT_DATA_LIST robot_state,
+                                    Errors& error,
+                                    int count)
+    {
+        std::array<float, 6> err = {0, };
+        std::array<float, 6> derr = {0, };
+        std::array<float, 6> err_integral = {0, };
+
+        Eigen::Map<Eigen::Matrix<float, 6, 1>> derrPrev(prev.derrPrev.data());
+
+        Torques torque = Torques();
+
+        float joint[6] = {0,};
+        float trq_gravity[6] = {0,};
+
+        memcpy(joint, robot_state->actual_joint_position, sizeof(float) * 6);
+        memcpy(trq_gravity, robot_state->gravity_torque, sizeof(float) * 6);
+
+        for (int i = 0; i < 6; ++i)
+        {
+            err[i] = desired.q_d[i] - joint[i];
+
+            if (i == 5 && count <= 500) {
+                float scaling_factor = static_cast<float>(count) / 500.0f;
+                err[5] *= scaling_factor;
+            }
+
+            if (err[i] >= 350.0f) {
+                err[i] -= 360.0f;
+            } else if (err[i] <= -350.0f) {
+                err[i] += 360.0f;
+            }
+
+            derr[i] = 0.1f * ((err[i] - error.e[i]) / dt) + 0.9f * derrPrev(i);
+            err_integral[i] = error.e_integral[i] + err[i] * dt;
+
+            torque.tau_d[i] =
+                M_hat_inv[i] * K1[i] / dt *
+                (err[i] + K1_inv[i] * derr[i] + K1[i] * K2_inv[i] * err_integral[i])
+                + trq_gravity[i];
+
+            if (torque.tau_d[i] > torque_limit[i]) {
+                torque.tau_d[i] = torque_limit[i];
+            } else if (torque.tau_d[i] < -torque_limit[i]) {
+                torque.tau_d[i] = -torque_limit[i];
+            }
+
+            derrPrev(i) = derr[i];
+        }
+
+        error.e = err;
+        error.de = derr;
+        error.e_integral = err_integral;
+
+        return torque;
+    }
+
+    std::pair<std::array<float, 6>, bool> PBIC::MotionGeneratorPBIC(
+        const TaskRef& ref,
+        const LPRT_OUTPUT_DATA_LIST robot_state,
+        TaskPointMode task_point_mode,
+        const Eigen::Isometry3f& T_flange_tcp,
+        int& sol_space)
+    {
+        std::array<float, 6> des = {0, };
+        bool is_singular = false;
+
+        TaskState s = getTaskState(robot_state, task_point_mode, T_flange_tcp);
+
+        if (!pbic_model_initialized_) {
+            resetPBICControllerState(s, robot_state);
+        }
+
+        // ------------------------------------------------------------
+        // DBIC와 동일한 방식의 task-space external wrench estimate
+        // ------------------------------------------------------------
+        Eigen::Matrix<float, 6, 6> J_inv = dampedPseudoInverse(s.J, 5e-3f);
+
+        Eigen::Map<const Eigen::Matrix<float, 6, 1>> trq_raw(robot_state->external_joint_torque);
+
+        Eigen::Matrix<float, 6, 1> Fext_raw = -1.0f * J_inv.transpose() * trq_raw;
+
+        float Fsensor[6] = {17.09f, -15.47f, 1.50f, 3.52f, -1.32f, 2.06f};
+        Eigen::Map<const Eigen::Matrix<float, 6, 1>> Fsensoroffset(Fsensor);
+        Fext_raw = Fext_raw - Fsensoroffset;
+
+        Eigen::Matrix<float, 6, 1> Fext = Fext_raw;
+
+        Eigen::Matrix<float, 6, 1> fext_abs_limit;
+        fext_abs_limit << 100.0f, 100.0f, 100.0f, 50.0f, 50.0f, 50.0f;
+
+        const float force_slew_rate  = 1000.0f;
+        const float torque_slew_rate = 100.0f;
+
+        Eigen::Matrix<float, 6, 1> fext_delta_limit;
+        fext_delta_limit << force_slew_rate * dt,
+                            force_slew_rate * dt,
+                            force_slew_rate * dt,
+                            torque_slew_rate * dt,
+                            torque_slew_rate * dt,
+                            torque_slew_rate * dt;
+
+        if (!pbic_fext_filter_init_) {
+            pbic_Fext_prev_ = Fext;
+            pbic_Fext_filt_ = Fext;
+            pbic_fext_filter_init_ = true;
+        }
+
+        for (int i = 0; i < 6; ++i) {
+            float delta = Fext(i) - pbic_Fext_prev_(i);
+
+            if (delta >  fext_delta_limit(i)) delta =  fext_delta_limit(i);
+            if (delta < -fext_delta_limit(i)) delta = -fext_delta_limit(i);
+
+            Fext(i) = pbic_Fext_prev_(i) + delta;
+
+            if (Fext(i) >  fext_abs_limit(i)) Fext(i) =  fext_abs_limit(i);
+            if (Fext(i) < -fext_abs_limit(i)) Fext(i) = -fext_abs_limit(i);
+        }
+
+        const float alpha_fext = 0.50f;
+        pbic_Fext_filt_ = alpha_fext * Fext + (1.0f - alpha_fext) * pbic_Fext_filt_;
+        pbic_Fext_prev_ = Fext;
+
+        // ------------------------------------------------------------
+        // PBIC outer impedance model
+        // xdd_m = xdd_d + M^{-1}[ B(xd_dot - x_m_dot) + K(xd - x_m) - F_int ]
+        // rotation도 quaternion error 기반으로 같은 철학 적용
+        // ------------------------------------------------------------
+        const Eigen::Matrix3f M_pos = M.block<3,3>(0,0);
+        const Eigen::Matrix3f B_pos = B.block<3,3>(0,0);
+        const Eigen::Matrix3f K_pos = K.block<3,3>(0,0);
+
+        const Eigen::Matrix3f M_rot = M.block<3,3>(3,3);
+        const Eigen::Matrix3f B_rot = B.block<3,3>(3,3);
+        const Eigen::Matrix3f K_rot = K.block<3,3>(3,3);
+
+        const Eigen::Matrix3f M_pos_inv = M_pos.inverse();
+        const Eigen::Matrix3f M_rot_inv = M_rot.inverse();
+
+        Eigen::Vector3f e_p    = ref.p_d - pbic_p_m_;
+        Eigen::Vector3f edot_p = ref.v_d - pbic_v_m_;
+
+        Eigen::Vector3f e_q    = quatLogError(ref.q_d, pbic_q_m_);
+        Eigen::Vector3f edot_q = ref.w_d - pbic_w_m_;
+
+        pbic_a_m_ =
+            ref.a_d + M_pos_inv * (B_pos * edot_p + K_pos * e_p - pbic_Fext_filt_.head<3>());
+
+        pbic_alpha_m_ =
+            ref.alpha_d + M_rot_inv * (B_rot * edot_q + K_rot * e_q - pbic_Fext_filt_.tail<3>());
+
+        // semi-implicit integration
+        pbic_v_m_ += pbic_a_m_ * dt;
+        pbic_p_m_ += pbic_v_m_ * dt;
+
+        pbic_w_m_ += pbic_alpha_m_ * dt;
+        pbic_q_m_ = integrateQuatBody(pbic_q_m_, pbic_w_m_, dt);
+        alignQuatHemisphere(pbic_q_m_, ref.q_d);
+
+        // ------------------------------------------------------------
+        // logging / legacy compatibility
+        // imp 구조체는 기존 dataSaving()가 그대로 쓸 수 있도록 유지
+        // ------------------------------------------------------------
+        std::array<float, 3> rpy_deg;
+        if (!pbic_prev_rpy_init_) {
+            rpy_deg = quatToEulerDegZYZ(pbic_q_m_);
+            pbic_prev_rpy_init_ = true;
+        } else {
+            rpy_deg = quatToEulerDegZYZNear(
+                pbic_q_m_,
+                pbic_prev_rpy_deg_[0],
+                pbic_prev_rpy_deg_[1],
+                pbic_prev_rpy_deg_[2]);
+        }
+
+        pbic_prev_rpy_deg_[0] = rpy_deg[0];
+        pbic_prev_rpy_deg_[1] = rpy_deg[1];
+        pbic_prev_rpy_deg_[2] = rpy_deg[2];
+
+        imp.pos_m(0) = pbic_p_m_(0) * 1000.0f;
+        imp.pos_m(1) = pbic_p_m_(1) * 1000.0f;
+        imp.pos_m(2) = pbic_p_m_(2) * 1000.0f;
+        imp.pos_m(3) = rpy_deg[0];
+        imp.pos_m(4) = rpy_deg[1];
+        imp.pos_m(5) = rpy_deg[2];
+
+        imp.vel_m(0) = pbic_v_m_(0) * 1000.0f;
+        imp.vel_m(1) = pbic_v_m_(1) * 1000.0f;
+        imp.vel_m(2) = pbic_v_m_(2) * 1000.0f;
+        imp.vel_m(3) = pbic_w_m_(0) * RAD2DEG;
+        imp.vel_m(4) = pbic_w_m_(1) * RAD2DEG;
+        imp.vel_m(5) = pbic_w_m_(2) * RAD2DEG;
+
+        imp.acc_m(0) = pbic_a_m_(0) * 1000.0f;
+        imp.acc_m(1) = pbic_a_m_(1) * 1000.0f;
+        imp.acc_m(2) = pbic_a_m_(2) * 1000.0f;
+        imp.acc_m(3) = pbic_alpha_m_(0) * RAD2DEG;
+        imp.acc_m(4) = pbic_alpha_m_(1) * RAD2DEG;
+        imp.acc_m(5) = pbic_alpha_m_(2) * RAD2DEG;
+
+        Eigen::Matrix<float, 6, 1> F_pbic = Eigen::Matrix<float, 6, 1>::Zero();
+        F_pbic.head<3>() =
+            M_pos * (ref.a_d - pbic_a_m_) + B_pos * edot_p + K_pos * e_p;
+        F_pbic.tail<3>() =
+            M_rot * (ref.alpha_d - pbic_alpha_m_) + B_rot * edot_q + K_rot * e_q;
+
+        for (int i = 0; i < 6; ++i) {
+            F.Fext[i] = pbic_Fext_filt_(i);
+            F.Fimp[i] = F_pbic(i);
+            F.F_PBIC[i] = F_pbic(i);
+            F.F_task[i] = F_pbic(i);
+        }
+
+        F.error[0] = e_p(0);
+        F.error[1] = e_p(1);
+        F.error[2] = e_p(2);
+        F.error[3] = e_q(0);
+        F.error[4] = e_q(1);
+        F.error[5] = e_q(2);
+
+        F.error_dot[0] = edot_p(0);
+        F.error_dot[1] = edot_p(1);
+        F.error_dot[2] = edot_p(2);
+        F.error_dot[3] = edot_q(0);
+        F.error_dot[4] = edot_q(1);
+        F.error_dot[5] = edot_q(2);
+
+        // ------------------------------------------------------------
+        // x_m(q_m) -> IK -> desired.q_d
+        // 이전 command와 가장 가까운 해를 선택
+        // ------------------------------------------------------------
+        float x_d[6] = {0, };
+        x_d[0] = pbic_p_m_(0) * 1000.0f;
+        x_d[1] = pbic_p_m_(1) * 1000.0f;
+        x_d[2] = pbic_p_m_(2) * 1000.0f;
+        x_d[3] = rpy_deg[0];
+        x_d[4] = rpy_deg[1];
+        x_d[5] = rpy_deg[2];
+
+        if (count_motion == 0) {
+            memcpy(previous_joint_command,
+                robot_state->actual_joint_position,
+                sizeof(float) * 6);
+        }
+
+        float best_des[NUMBER_OF_JOINT] = {0, };
+        bool found_solution = false;
+        float best_cost = 1.0e30f;
+        int best_sol_space = sol_space;
+
+        for (int cand_sol = 0; cand_sol < 8; ++cand_sol) {
+            LPINVERSE_KINEMATIC_RESPONSE cand =
+                Drfl_.ikin(x_d, cand_sol, COORDINATE_SYSTEM_WORLD, 1);
+
+            if (cand == nullptr) {
+                continue;
+            }
+
+            float cost = 0.0f;
+            for (int i = 0; i < 6; ++i) {
+                float delta = cand->_fTargetPos[i] - previous_joint_command[i];
+                while (delta > 180.0f) delta -= 360.0f;
+                while (delta < -180.0f) delta += 360.0f;
+                cost += delta * delta;
+            }
+
+            if (cost < best_cost) {
+                best_cost = cost;
+                best_sol_space = cand_sol;
+                for (int i = 0; i < 6; ++i) {
+                    best_des[i] = cand->_fTargetPos[i];
+                }
+                found_solution = true;
+            }
+        }
+
+        if (!found_solution) {
+            ROS_WARN("MotionGeneratorPBIC: IK failed for all solution spaces. Holding previous joint command.");
+            for (int i = 0; i < 6; ++i) {
+                des[i] = previous_joint_command[i];
+            }
+
+            pbic_singularity_counter_++;
+            if (pbic_singularity_counter_ >= 10) {
+                is_singular = true;
+            }
+
+            return {des, is_singular};
+        }
+
+        sol_space = best_sol_space;
+        for (int i = 0; i < 6; ++i) {
+            des[i] = best_des[i];
+        }
+
+        bool branch_jump = false;
+        int jump_joint = -1;
+        float jump_delta = 0.0f;
+
+        for (int i = 0; i < 6; ++i) {
+            float delta = des[i] - previous_joint_command[i];
+            while (delta > 180.0f) delta -= 360.0f;
+            while (delta < -180.0f) delta += 360.0f;
+
+            if (std::fabs(delta) > 35.0f) {
+                branch_jump = true;
+                jump_joint = i;
+                jump_delta = delta;
+                pbic_singularity_counter_++;
+                break;
+            }
+        }
+
+        if (branch_jump) {
+            std::cout << "PBIC IK branch jump at joint " << jump_joint
+                    << ", prev_cmd : " << previous_joint_command[jump_joint]
+                    << ", ik_cmd : " << des[jump_joint]
+                    << ", delta : " << jump_delta
+                    << ", sol_space : " << best_sol_space << std::endl;
+            ROS_WARN("PBIC IK branch jump detected");
+
+            for (int i = 0; i < 6; ++i) {
+                des[i] = previous_joint_command[i];
+            }
+        } else {
+            pbic_singularity_counter_ = 0;
+        }
+
+        if (pbic_singularity_counter_ >= 10) {
+            ROS_WARN("PBIC IK branch jump persisted for 10 frames. Exiting motion.");
+            is_singular = true;
+        }
+
+        std::copy(robot_state->actual_flange_position,
+                robot_state->actual_flange_position + 6,
+                begin(prev.xPrev));
+
+        for (int i = 0; i < 6; ++i) {
+            prev.vPrev[i] = imp.vel_m(i);
+            prev.F_extPrev[i] = pbic_Fext_filt_(i);
+            previous_joint_command[i] = des[i];
+        }
+
+        count_motion++;
+
+        return {des, is_singular};
+    }
+
 
     //new0317
     TaskState PBIC::getTaskState(const LPRT_OUTPUT_DATA_LIST robot_state,
@@ -598,7 +1074,7 @@ namespace SKKU
 
             // 외력 = 0 experiment setting
             // Fe_paper = Eigen::Matrix<float, 6, 1>::Zero();
-        }
+    
 
         Eigen::Matrix<float, 6, 1> e    = Eigen::Matrix<float, 6, 1>::Zero();
         Eigen::Matrix<float, 6, 1> edot = Eigen::Matrix<float, 6, 1>::Zero();
@@ -608,9 +1084,6 @@ namespace SKKU
         edot_raw.head<3>() = ref.v_d - s.v;
 
         e.tail<3>()    = quatLogError(ref.q_d, s.q);
-<<<<<<< Updated upstream
-        edot.tail<3>() = ref.w_d - s.w;
-=======
         edot_raw.tail<3>() = ref.w_d - s.w;
         // new0330 Debug logs for edot decomposition
 
@@ -681,7 +1154,6 @@ namespace SKKU
             g_ref_w_d_log[i].store(ref.w_d(i), std::memory_order_relaxed);
             g_s_w_log[i].store(s.w(i), std::memory_order_relaxed);
         }        
->>>>>>> Stashed changes
 
         Eigen::Matrix<float, 6, 1> xdd_d = Eigen::Matrix<float, 6, 1>::Zero();
         xdd_d.head<3>() = ref.a_d;
@@ -716,13 +1188,6 @@ namespace SKKU
 
         Eigen::Matrix<float, 6, 1> Nhat = Cmat * qdot + g;
 
-<<<<<<< Updated upstream
-        Eigen::Matrix<float, 6, 1> tau =
-            Hhat * J_inv * (u_d - Jdot_qdot)
-            + Nhat
-            + s.J.transpose() * Fe_paper;
-
-=======
         // Eigen::Matrix<float, 6, 1> tau =
         //     Hhat * J_inv * (u_d - Jdot_qdot)
         //     + Nhat
@@ -791,7 +1256,6 @@ namespace SKKU
         Fext_prev = Fext;
 
         //
->>>>>>> Stashed changes
         Eigen::Matrix<float, 6, 1> Fspring = Kd_ * e;
         Eigen::Matrix<float, 6, 1> Fdamp   = Bd_ * edot;
         Eigen::Matrix<float, 6, 1> Fdbic   = Fspring + Fdamp - Fe_paper;

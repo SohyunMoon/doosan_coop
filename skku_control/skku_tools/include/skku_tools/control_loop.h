@@ -423,7 +423,18 @@ class ControlLoop : protected PBIC{
                              SKKU::Duration time_step,
                              Torques& control_command,
                              const TaskRef& ref_task);
+        //new0407
+        bool spinMotionPBIC(const LPRT_OUTPUT_DATA_LIST& robot_state,
+                            SKKU::Duration time_step,
+                            const TaskRef& ref_task,
+                            Desired& desired,
+                            int& sol_space);
 
+        bool spinControlPBIC(const LPRT_OUTPUT_DATA_LIST& robot_state,
+                            SKKU::Duration time_step,
+                            Torques& control_command,
+                            Desired& desired);
+        //
         TaskRef convertRefToTaskPoint(const TaskRef& tcp_ref) const;
         int finishMotion();
         int cancelMotion();
