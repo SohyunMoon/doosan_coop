@@ -409,9 +409,20 @@ class ControlLoop : protected PBIC{
         void waitForMotionCompletionWithRetry(float target_joint[NUMBER_OF_JOINT], float tolerance, int timeout_ms, int max_retries);
         void saveLoopTimesToFile(const std::string& filePath);
     protected:
+        //new0410
         // ---------------- PBIC / legacy ----------------
-        bool spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state, SKKU::Duration time_step, Desired& desire, int sol_space);
-        bool spinMotion_path(const LPRT_OUTPUT_DATA_LIST& robot_state, SKKU::Duration time_step, Desired& desired, int sol_space);
+        // bool spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state, SKKU::Duration time_step, Desired& desire, int sol_space);
+        // bool spinMotion_path(const LPRT_OUTPUT_DATA_LIST& robot_state, SKKU::Duration time_step, Desired& desired, int sol_space);
+        
+        bool spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state,
+                        SKKU::Duration time_step,
+                        Desired& desire,
+                        int& sol_space);
+
+        bool spinMotion_path(const LPRT_OUTPUT_DATA_LIST& robot_state,
+                            SKKU::Duration time_step,
+                            Desired& desired,
+                            int& sol_space);         //                   
         bool spinControl(const LPRT_OUTPUT_DATA_LIST& robot_state, SKKU::Duration time_step, Torques& control_command, Desired& desired, int sol_space);
 
         // ---------------- DBIC 전용 ----------------
@@ -423,18 +434,7 @@ class ControlLoop : protected PBIC{
                              SKKU::Duration time_step,
                              Torques& control_command,
                              const TaskRef& ref_task);
-        //new0407
-        bool spinMotionPBIC(const LPRT_OUTPUT_DATA_LIST& robot_state,
-                            SKKU::Duration time_step,
-                            const TaskRef& ref_task,
-                            Desired& desired,
-                            int& sol_space);
 
-        bool spinControlPBIC(const LPRT_OUTPUT_DATA_LIST& robot_state,
-                            SKKU::Duration time_step,
-                            Torques& control_command,
-                            Desired& desired);
-        //
         TaskRef convertRefToTaskPoint(const TaskRef& tcp_ref) const;
         int finishMotion();
         int cancelMotion();
@@ -466,7 +466,7 @@ class ControlLoop : protected PBIC{
         int sol_space = 0;
         int saving_count = 0;
 
-        // // ImpedanceImplMode impedance_impl_mode_ = ImpedanceImplMode::kPBIC_TDC;
+        // ImpedanceImplMode impedance_impl_mode_ = ImpedanceImplMode::kPBIC_TDC;
         // ImpedanceImplMode impedance_impl_mode_ = ImpedanceImplMode::kDBIC;
         // TaskPointMode task_point_mode_ = TaskPointMode::kTCP;
         // Eigen::Isometry3f T_flange_tcp_ = Eigen::Isometry3f::Identity();
