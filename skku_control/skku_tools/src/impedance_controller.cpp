@@ -314,8 +314,8 @@ namespace {
         s.q = imp.q_m;
         s.w = imp.w_m;
 
-        const Eigen::Vector3f Fext_lin = F_ext.head<3>();
-        const Eigen::Vector3f Text_rot = F_ext.tail<3>();
+        const Eigen::Vector3f Fext_lin = -1.0f*F_ext.head<3>();
+        const Eigen::Vector3f Text_rot = -1.0f*F_ext.tail<3>();
 
         const Eigen::Vector3f Mlin_inv(
             M_inv(0, 0), M_inv(1, 1), M_inv(2, 2));
@@ -548,7 +548,7 @@ namespace SKKU
         imp_k = config["imp_k"].as<float>();
 
         M_gains = {imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000};
-        K_gains = {3*imp_k, 3*imp_k, imp_k, 0.1f*imp_k, 0.1f*imp_k, 0.1f*imp_k};
+        K_gains = {3*imp_k, 3*imp_k, imp_k, imp_k, imp_k, imp_k};
         for (int i = 0; i < 6; ++i)
         {
             // B_gains[i] = 2 * sqrt(K_gains[i] * M_gains[i]); // 2 critical dmaped
@@ -1808,7 +1808,7 @@ namespace SKKU
         }
 
         Eigen::Matrix<float, 6, 6> J_inv = dampedPseudoInverse(s.J, 5e-3f);
-        Eigen::Matrix<float, 6, 1> Fext_raw = -1.0f * J_inv.transpose() * tau_ext;
+        Eigen::Matrix<float, 6, 1> Fext_raw = 1.0f * J_inv.transpose() * tau_ext;
 
         Eigen::Matrix<float, 6, 1> Fext = Fext_raw;
 

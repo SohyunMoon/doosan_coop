@@ -466,13 +466,13 @@ class ControlLoop : protected PBIC{
         int sol_space = 0;
         int saving_count = 0;
 
-        // ImpedanceImplMode impedance_impl_mode_ = ImpedanceImplMode::kPBIC_TDC;
+        ImpedanceImplMode impedance_impl_mode_ = ImpedanceImplMode::kPBIC_TDC;
         // ImpedanceImplMode impedance_impl_mode_ = ImpedanceImplMode::kDBIC;
         // TaskPointMode task_point_mode_ = TaskPointMode::kTCP;
         // Eigen::Isometry3f T_flange_tcp_ = Eigen::Isometry3f::Identity();
 
         // DBIC 유지
-        ImpedanceImplMode impedance_impl_mode_ = ImpedanceImplMode::kDBIC;
+        // ImpedanceImplMode impedance_impl_mode_ = ImpedanceImplMode::kDBIC;
 
         // 기존 Python goal을 PBIC 때와 같은 의미로 먼저 맞추기 위해
         // 우선 flange 기준으로 해석한다.
