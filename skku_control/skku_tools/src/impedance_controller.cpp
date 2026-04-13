@@ -131,6 +131,255 @@ namespace {
             Eigen::Matrix<float, 6, 6>::Identity();
         return J.transpose() * (J * J.transpose() + lambda * lambda * I).inverse();
     }
+//new0412
+    constexpr float RAD2DEG = 180.0f / static_cast<float>(M_PI);
+
+    inline Eigen::Quaternionf quatFromPose7(const std::array<float, 7>& pose7) {
+        return normalizeQuat(Eigen::Quaternionf(
+            pose7[6], pose7[3], pose7[4], pose7[5]));
+    }
+
+    inline float unwrapNearDeg(float angle_deg, float ref_deg) {
+        while (angle_deg - ref_deg > 180.0f) angle_deg -= 360.0f;
+        while (angle_deg - ref_deg < -180.0f) angle_deg += 360.0f;
+        return angle_deg;
+    }
+
+    inline std::array<float, 3> quatToEulerZYZDeg(const Eigen::Quaternionf& q_in) {
+        Eigen::Quaternionf q = normalizeQuat(q_in);
+        Eigen::Vector3f zyz = q.toRotationMatrix().eulerAngles(2, 1, 2);
+
+        return {
+            zyz[0] * RAD2DEG,
+            zyz[1] * RAD2DEG,
+            zyz[2] * RAD2DEG
+        };
+    }
+
+    inline std::array<float, 3> quatToEulerZYZDegNear(
+        const Eigen::Quaternionf& q_in,
+        float ref_z1_deg,
+        float ref_y_deg,
+        float ref_z2_deg) {
+
+        auto zyz = quatToEulerZYZDeg(q_in);
+
+        zyz[0] = unwrapNearDeg(zyz[0], ref_z1_deg);
+        zyz[1] = unwrapNearDeg(zyz[1], ref_y_deg);
+        zyz[2] = unwrapNearDeg(zyz[2], ref_z2_deg);
+
+        float y_abs = std::fmod(std::fabs(zyz[1]), 360.0f);
+        if (y_abs > 180.0f) y_abs = 360.0f - y_abs;
+
+        // ZYZ singularity 근처에서는 Z 분해를 이전 값 근처로 유지
+        if (y_abs < 1.0e-4f || std::fabs(y_abs - 180.0f) < 1.0e-4f) {
+            zyz[0] = ref_z1_deg;
+            zyz[2] = ref_z2_deg;
+        }
+
+        return zyz;
+    }
+
+    inline Eigen::Quaternionf quatDerivativeWorld(const Eigen::Quaternionf& q,
+                                                const Eigen::Vector3f& w_world) {
+        Eigen::Quaternionf omega_q(0.0f, w_world.x(), w_world.y(), w_world.z());
+        Eigen::Quaternionf dq = omega_q * q;
+        dq.coeffs() *= 0.5f;
+        return dq;
+    }
+
+    inline Eigen::Quaternionf quatFromCoeffVec(const Eigen::Vector4f& coeffs_xyzw) {
+        return normalizeQuat(Eigen::Quaternionf(
+            coeffs_xyzw[3], coeffs_xyzw[0], coeffs_xyzw[1], coeffs_xyzw[2]));
+    }
+
+    struct PoseQuatState {
+        Eigen::Vector3f p = Eigen::Vector3f::Zero();
+        Eigen::Vector3f v = Eigen::Vector3f::Zero();
+        Eigen::Quaternionf q = Eigen::Quaternionf::Identity();
+        Eigen::Vector3f w = Eigen::Vector3f::Zero();
+    };
+
+    struct PoseQuatDeriv {
+        Eigen::Vector3f dp = Eigen::Vector3f::Zero();
+        Eigen::Vector3f dv = Eigen::Vector3f::Zero();
+        Eigen::Vector4f dq = Eigen::Vector4f::Zero();  // [x,y,z,w]
+        Eigen::Vector3f dw = Eigen::Vector3f::Zero();
+    };
+
+    inline PoseQuatState addState(const PoseQuatState& s,
+                                const PoseQuatDeriv& k,
+                                float h) {
+        PoseQuatState out = s;
+        out.p = s.p + h * k.dp;
+        out.v = s.v + h * k.dv;
+        out.w = s.w + h * k.dw;
+        out.q = quatFromCoeffVec(s.q.coeffs() + h * k.dq);
+        return out;
+    }
+
+    inline PoseQuatDeriv evalPoseQuatDeriv(
+        const PoseQuatState& s,
+        const Eigen::Vector3f& p_d,
+        const Eigen::Vector3f& v_d,
+        const Eigen::Vector3f& a_d,
+        const Eigen::Quaternionf& q_d_in,
+        const Eigen::Vector3f& w_d,
+        const Eigen::Vector3f& alpha_d,
+        const Eigen::Vector3f& Fext_lin,
+        const Eigen::Vector3f& Text_rot,
+        const Eigen::Vector3f& Mlin_inv,
+        const Eigen::Vector3f& Blin,
+        const Eigen::Vector3f& Klin,
+        const Eigen::Vector3f& Mrot_inv,
+        const Eigen::Vector3f& Brot,
+        const Eigen::Vector3f& Krot) {
+
+        PoseQuatDeriv k;
+        k.dp = s.v;
+
+        k.dv = a_d
+            + Mlin_inv.cwiseProduct(
+                Blin.cwiseProduct(v_d - s.v)
+                + Klin.cwiseProduct(p_d - s.p)
+                - Fext_lin);
+
+        Eigen::Quaternionf q_d = q_d_in;
+        alignQuatHemisphere(q_d, s.q);
+        const Eigen::Vector3f e_R = quatLogError(q_d, s.q);
+
+        k.dw = alpha_d
+            + Mrot_inv.cwiseProduct(
+                Brot.cwiseProduct(w_d - s.w)
+                + Krot.cwiseProduct(e_R)
+                - Text_rot);
+
+        k.dq = quatDerivativeWorld(s.q, s.w).coeffs();
+        return k;
+    }
+    inline void syncImpedanceLegacyMirror(SKKU::Impedance& imp,
+                                        float ref_z1_deg,
+                                        float ref_y_deg,
+                                        float ref_z2_deg) {
+        auto zyz = quatToEulerZYZDegNear(imp.q_m, ref_z1_deg, ref_y_deg, ref_z2_deg);
+
+        imp.pos_m.setZero();
+        imp.vel_m.setZero();
+        imp.acc_m.setZero();
+
+        imp.pos_m(0) = imp.p_m(0);
+        imp.pos_m(1) = imp.p_m(1);
+        imp.pos_m(2) = imp.p_m(2);
+        imp.pos_m(3) = zyz[0];
+        imp.pos_m(4) = zyz[1];
+        imp.pos_m(5) = zyz[2];
+
+        imp.vel_m(0) = imp.v_m(0);
+        imp.vel_m(1) = imp.v_m(1);
+        imp.vel_m(2) = imp.v_m(2);
+
+        // 주의: tail은 ZYZ Euler rate가 아니라 angular-velocity component를 deg/s로 기록
+        imp.vel_m(3) = imp.w_m(0) * RAD2DEG;
+        imp.vel_m(4) = imp.w_m(1) * RAD2DEG;
+        imp.vel_m(5) = imp.w_m(2) * RAD2DEG;
+
+        imp.acc_m(0) = imp.a_m(0);
+        imp.acc_m(1) = imp.a_m(1);
+        imp.acc_m(2) = imp.a_m(2);
+
+        imp.acc_m(3) = imp.alpha_m(0) * RAD2DEG;
+        imp.acc_m(4) = imp.alpha_m(1) * RAD2DEG;
+        imp.acc_m(5) = imp.alpha_m(2) * RAD2DEG;
+    }
+
+    inline void rungeKuttaPoseQuaternion(
+        SKKU::Impedance& imp,
+        const Eigen::Vector3f& p_d,
+        const Eigen::Vector3f& v_d,
+        const Eigen::Vector3f& a_d,
+        const Eigen::Quaternionf& q_d_in,
+        const Eigen::Vector3f& w_d,
+        const Eigen::Vector3f& alpha_d,
+        const Eigen::Matrix<float, 6, 1>& F_ext,
+        const Eigen::Matrix<float, 6, 6>& M,
+        const Eigen::Matrix<float, 6, 6>& B,
+        const Eigen::Matrix<float, 6, 6>& K,
+        const Eigen::Matrix<float, 6, 6>& M_inv,
+        float dt,
+        int n) {
+
+        PoseQuatState s;
+        s.p = imp.p_m;
+        s.v = imp.v_m;
+        s.q = imp.q_m;
+        s.w = imp.w_m;
+
+        const Eigen::Vector3f Fext_lin = F_ext.head<3>();
+        const Eigen::Vector3f Text_rot = F_ext.tail<3>();
+
+        const Eigen::Vector3f Mlin_inv(
+            M_inv(0, 0), M_inv(1, 1), M_inv(2, 2));
+        const Eigen::Vector3f Blin(
+            B(0, 0), B(1, 1), B(2, 2));
+        const Eigen::Vector3f Klin(
+            K(0, 0), K(1, 1), K(2, 2));
+
+        // 기존 rotational gains는 degree 기반으로 튜닝돼 있으므로
+        // quaternion / angular velocity(rad)로 계산할 때 rad 기준으로 환산
+        const Eigen::Vector3f Mrot_inv(
+            M_inv(3, 3) / RAD2DEG,
+            M_inv(4, 4) / RAD2DEG,
+            M_inv(5, 5) / RAD2DEG);
+        const Eigen::Vector3f Brot(
+            B(3, 3) * RAD2DEG,
+            B(4, 4) * RAD2DEG,
+            B(5, 5) * RAD2DEG);
+        const Eigen::Vector3f Krot(
+            K(3, 3) * RAD2DEG,
+            K(4, 4) * RAD2DEG,
+            K(5, 5) * RAD2DEG);
+
+        const float h = dt / static_cast<float>(n);
+
+        for (int i = 0; i < n; ++i) {
+            const PoseQuatDeriv k1 = evalPoseQuatDeriv(
+                s, p_d, v_d, a_d, q_d_in, w_d, alpha_d,
+                Fext_lin, Text_rot, Mlin_inv, Blin, Klin, Mrot_inv, Brot, Krot);
+
+            const PoseQuatDeriv k2 = evalPoseQuatDeriv(
+                addState(s, k1, 0.5f * h),
+                p_d, v_d, a_d, q_d_in, w_d, alpha_d,
+                Fext_lin, Text_rot, Mlin_inv, Blin, Klin, Mrot_inv, Brot, Krot);
+
+            const PoseQuatDeriv k3 = evalPoseQuatDeriv(
+                addState(s, k2, 0.5f * h),
+                p_d, v_d, a_d, q_d_in, w_d, alpha_d,
+                Fext_lin, Text_rot, Mlin_inv, Blin, Klin, Mrot_inv, Brot, Krot);
+
+            const PoseQuatDeriv k4 = evalPoseQuatDeriv(
+                addState(s, k3, h),
+                p_d, v_d, a_d, q_d_in, w_d, alpha_d,
+                Fext_lin, Text_rot, Mlin_inv, Blin, Klin, Mrot_inv, Brot, Krot);
+
+            s.p += (h / 6.0f) * (k1.dp + 2.0f * k2.dp + 2.0f * k3.dp + k4.dp);
+            s.v += (h / 6.0f) * (k1.dv + 2.0f * k2.dv + 2.0f * k3.dv + k4.dv);
+            s.w += (h / 6.0f) * (k1.dw + 2.0f * k2.dw + 2.0f * k3.dw + k4.dw);
+            s.q  = quatFromCoeffVec(
+                s.q.coeffs() + (h / 6.0f) * (k1.dq + 2.0f * k2.dq + 2.0f * k3.dq + k4.dq));
+        }
+
+        const PoseQuatDeriv kf = evalPoseQuatDeriv(
+            s, p_d, v_d, a_d, q_d_in, w_d, alpha_d,
+            Fext_lin, Text_rot, Mlin_inv, Blin, Klin, Mrot_inv, Brot, Krot);
+
+        imp.p_m = s.p;
+        imp.v_m = s.v;
+        imp.a_m = kf.dv;
+
+        imp.q_m = s.q;
+        imp.w_m = s.w;
+        imp.alpha_m = kf.dw;
+    }    
 }//
 
 
@@ -376,22 +625,53 @@ namespace SKKU
         Bd_.diagonal() << 1000.0f, 1000.0f, 1000.0f, 40.0f, 40.0f, 40.0f;        
         dt = static_cast<float>(loop_time) / 1000.0f;
     }
+    //new0412
+    // void PBIC::start_Motion(LPRT_OUTPUT_DATA_LIST &robot_state, Prev &prev, Impedance &imp)
+    // {
+    //     robot_state = Drfl_.read_data_rt();
 
+    //     // Previous value setting
+    //     std::copy(robot_state->actual_flange_position, robot_state->actual_flange_position + 6, begin(prev.xPrev));
+
+    //     for (int i = 0; i < 6; i++)
+    //     {
+    //         imp.pos_m(i) = robot_state->actual_flange_position[i];
+
+    //         imp.vel_m(i) = 0;
+    //         imp.acc_m(i) = 0;
+    //     }
+    // }
     void PBIC::start_Motion(LPRT_OUTPUT_DATA_LIST &robot_state, Prev &prev, Impedance &imp)
     {
         robot_state = Drfl_.read_data_rt();
 
-        // Previous value setting
-        std::copy(robot_state->actual_flange_position, robot_state->actual_flange_position + 6, begin(prev.xPrev));
+        std::copy(robot_state->actual_flange_position,
+                robot_state->actual_flange_position + 6,
+                begin(prev.xPrev));
 
-        for (int i = 0; i < 6; i++)
-        {
-            imp.pos_m(i) = robot_state->actual_flange_position[i];
+        std::fill(prev.vPrev.begin(), prev.vPrev.end(), 0.0f);
+        std::fill(prev.F_extPrev.begin(), prev.F_extPrev.end(), 0.0f);
 
-            imp.vel_m(i) = 0;
-            imp.acc_m(i) = 0;
-        }
+        imp.p_m << robot_state->actual_flange_position[0],
+                robot_state->actual_flange_position[1],
+                robot_state->actual_flange_position[2];
+
+        imp.v_m.setZero();
+        imp.a_m.setZero();
+
+        imp.q_m = quatFromEulerZYZDeg(robot_state->actual_flange_position[3],
+                                    robot_state->actual_flange_position[4],
+                                    robot_state->actual_flange_position[5]);
+
+        imp.w_m.setZero();
+        imp.alpha_m.setZero();
+
+        syncImpedanceLegacyMirror(imp,
+                                robot_state->actual_flange_position[3],
+                                robot_state->actual_flange_position[4],
+                                robot_state->actual_flange_position[5]);
     }
+    //
 
     // void PBIC::resetDBICControllerState()
     // {
@@ -909,145 +1189,608 @@ namespace SKKU
     // 여기의 Euler dummy orientation은 현재 DBIC photo issue의 직접 원인이 아니다.
     //new0411
     // std::pair<std::array<float, 6>, bool> PBIC::MotionGenerator(Trajectory &trajectory, const LPRT_OUTPUT_DATA_LIST robot_state, Prev &prev, Impedance &imp, int sol_space, bool correction_flag,int operator_call_count_)
-    std::pair<std::array<float, 6>, bool> PBIC::MotionGenerator(Trajectory &trajectory,
-                                                                const LPRT_OUTPUT_DATA_LIST robot_state,
-                                                                Prev &prev,
-                                                                Impedance &imp,
-                                                                int& sol_space,
-                                                                bool correction_flag,
-                                                                int operator_call_count_,
-                                                                TaskPointMode task_point_mode,
-                                                                const Eigen::Isometry3f& T_flange_tcp)//
+    // std::pair<std::array<float, 6>, bool> PBIC::MotionGenerator(Trajectory &trajectory,
+    //                                                             const LPRT_OUTPUT_DATA_LIST robot_state,
+    //                                                             Prev &prev,
+    //                                                             Impedance &imp,
+    //                                                             int& sol_space,
+    //                                                             bool correction_flag,
+    //                                                             int operator_call_count_,
+    //                                                             TaskPointMode task_point_mode,
+    //                                                             const Eigen::Isometry3f& T_flange_tcp)//
+    // {
+    //     static int singularity_counter = 0;
+    //     bool is_singular = false;
+    //     std::array<float, 6> des = {0, };
+    //     LPRT_OUTPUT_DATA_LIST robot_data = Drfl_.read_data_rt();
+    //     Eigen::Map<const Eigen::Matrix<float, 6, 1>> q(robot_state->actual_joint_position);
+    //     Eigen::Map<const Eigen::Matrix<float, 6, 1>> x(robot_state->actual_flange_position);
+    //     Eigen::Map<Eigen::Matrix<float, 6, 1>> xPrev(prev.xPrev.data());
+    //     Eigen::Map<Eigen::Matrix<float, 6, 1>> vPrev(prev.vPrev.data());
+    //     Eigen::Map<Eigen::Matrix<float, 6, 1>> qPrev(prev.qPrev.data());
+    
+    //     Eigen::Map<const Eigen::Matrix<float, 6, 1>> trq_raw(robot_state->actual_joint_torque);
+    //     Eigen::Map<Eigen::Matrix<float, 6, 1>> trq_ext(robot_state->external_joint_torque);
+    //     Eigen::Map<const Eigen::Matrix<float, 6, 1>> trq_g(robot_state->gravity_torque);
+    //     Eigen::Map<Eigen::Matrix<float, 6, 1>> F_extPrev(prev.F_extPrev.data());
+    //     // Eigen::Map<Eigen::Matrix<float, 6, 1>> pos(trajectory.pos_d.data());
+    //     // Eigen::Map<Eigen::Matrix<float, 6, 1>> vel(trajectory.vel_d.data());
+    //     // Eigen::Map<Eigen::Matrix<float, 6, 1>> acc(trajectory.acc_d.data());
+
+    //     // // ✅ 물리적 크기인 7차원으로 우선 매핑
+    //     // Eigen::Map<Eigen::Matrix<float, 7, 1>> pos(trajectory.pos_d.data());
+    //     // Eigen::Map<Eigen::Matrix<float, 7, 1>> vel(trajectory.vel_d.data());
+    //     // Eigen::Map<Eigen::Matrix<float, 7, 1>> acc(trajectory.acc_d.data());
+
+    //     // 여기서 trajectory는 fillEulerDummyForIK()를 거친 Euler dummy trajectory입니다.
+    //     // 따라서 앞의 6개만 [x, y, z, roll, pitch, yaw]로 사용해야 합니다.
+    //     Eigen::Map<const Eigen::Matrix<float, 6, 1>> pos_euler(trajectory.pos_d.data());
+    //     Eigen::Map<const Eigen::Matrix<float, 6, 1>> vel_euler(trajectory.vel_d.data());
+    //     Eigen::Map<const Eigen::Matrix<float, 6, 1>> acc_euler(trajectory.acc_d.data());
+
+    //     Eigen::Matrix<float, 6, 6> JPrev;
+    //     float qd_sing[NUMBER_OF_JOINT] = {0,};
+    //     Eigen::Matrix<float, 6, 1> v = 0.05 * (x - xPrev) / dt + 0.95 * vPrev;
+    //     float q_input_array[NUMBER_OF_JOINT]  = {0,};
+    //     float trq_ext_input_array[NUMBER_OF_JOINT] = {0,};
+    //     float task_p_input_array[NUMBER_OF_JOINT] = {0,};
+    //     float jacobianMatrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT] = {{0,}};
+    //     float F_box[NUMBER_OF_JOINT] = {0,};
+
+
+    //     memcpy(q_input_array, robot_state->actual_joint_position, sizeof(float) * 6);
+    //     memcpy(trq_ext_input_array, robot_state->external_joint_torque, sizeof(float) * 6);
+    //     memcpy(task_p_input_array, robot_state->target_tcp_position, sizeof(float) * 6);
+    //     memcpy(jacobianMatrix, robot_data->jacobian_matrix, NUMBER_OF_JOINT * NUMBER_OF_JOINT * sizeof(float));
+    //     memcpy(F_box, robot_data->external_tcp_force, NUMBER_OF_JOINT * sizeof(float));
+
+    //     Eigen::Matrix<float, 6, 6> J;
+
+    //     for (int i = 0; i < NUMBER_OF_JOINT; ++i) {
+    //         for (int j = 0; j < NUMBER_OF_JOINT; ++j) {
+    //             J(i,j) = jacobianMatrix[i][j];
+    //         }
+    //         // F_ext(i) = F_box[i];
+    //         // 노이즈로 인한 토크 발산을 막기 위해 로우패스 필터(LPF) 적용 복구
+    //         F_ext(i) = 0.1f * F_box[i] + 0.9f * F_extPrev(i);
+    //         F_ext(i) = 0;
+    //     }
+
+    //     Eigen::Matrix<float, 1, 6> q_input_matrix;
+    //     Eigen::Matrix<float, 1, 6> task_p_input_matrix;
+    //     Eigen::Matrix<float, 1, 6> trq_ext_input_matrix;
+
+    //     for (int i = 0; i < 6; ++i) {
+    //         q_input_matrix(0, i) = q_input_array[i];
+    //         task_p_input_matrix(0, i) = task_p_input_array[i];
+    //         trq_ext_input_matrix(0, i) = trq_ext_input_array[i];
+    //     }
+
+    //     // F_estim = F_estimate(q_input_matrix, task_p_input_matrix, trq_ext_input_matrix);
+        
+    //     // external force estimation 
+    //     // F_ext = 0.1 * (J.transpose().inverse() * (trq_ext) - F_offset) + 0.9 * F_extPrev; // w/ Gripper 
+    //     // F_ext = 0.1 * (J.transpose().inverse() * (trq_ext) - F_estim) + 0.9 * F_extPrev; // w/ Gripper learning
+    //     // F_ext = 0.1 * (J.transpose().inverse() * (trq_ext)) + 0.9 * F_extPrev; // w/o Gripper 
+
+    //     // F_ext = (J.transpose().inverse() * (trq_ext)) - F_offset;``````
+
+    //     // Remove moment
+    //     // F_ext[3] = 0;
+    //     // F_ext[4] = 0;
+    //     // F_ext[5] = 0;
+    //     // 
+
+    //     // 2. utilize force sensor
+    //     for (int i = 0 ; i < 6 ; i++) {
+    //         F_sensor[i] = sensor_data.AFT_wrench_[i];
+    //     }
+        
+    //     // consider adhere frame
+    //     float(*result)[3] = Drfl_.get_current_rotm();
+
+    //     F_sensor_matched[0] = -F_sensor[0];
+    //     F_sensor_matched[1] = -F_sensor[1];
+    //     F_sensor_matched[2] = F_sensor[2];
+    //     F_sensor_matched[3] = -F_sensor[3];
+    //     F_sensor_matched[4] = -F_sensor[4];
+    //     F_sensor_matched[5] = F_sensor[5];
+
+    //     Eigen::Matrix3f rotationMatrix;
+    //     for (int i = 0; i < 3; ++i) {
+    //         for (int j = 0; j < 3; ++j) {
+    //             rotationMatrix(i, j) = result[i][j];
+    //         }
+    //     }
+
+    //     Eigen::Vector3f forceVector(F_sensor_matched[0], F_sensor_matched[1], F_sensor_matched[2]);
+    //     Eigen::Vector3f torqueVector(F_sensor_matched[3], F_sensor_matched[4], F_sensor_matched[5]);
+
+    //     // Step 3: Multiply the vectors by the rotation matrix
+    //     Eigen::Vector3f rotatedForce = rotationMatrix * forceVector;
+    //     Eigen::Vector3f rotatedTorque = rotationMatrix * torqueVector;
+
+    //     F_sensor_matched[0] = rotatedForce(0);  // Rotated x-force
+    //     F_sensor_matched[1] = rotatedForce(1);  // Rotated y-force
+    //     F_sensor_matched[2] = rotatedForce(2);  // Rotated z-force
+
+    //     F_sensor_matched[3] = rotatedTorque(0);  // Rotated x-torque
+    //     F_sensor_matched[4] = rotatedTorque(1);  // Rotated y-torque
+    //     F_sensor_matched[5] = rotatedTorque(2);  // Rotated z-torque
+        
+    //     // F_ext = 0.2 * F_sensor + 0.8 * F_extPrev - F_offset; // Sensor value -> External force 
+
+    //     for (int i = 0 ; i < 6 ; i++) {
+    //         sensor_data.AFT_wrench_matched[i] = F_sensor_matched[i]; 
+    //     }
+    //     //new0411
+    //     // ------------------------------------------------------------------
+    //     // external_joint_torque -> task wrench
+    //     // DBIC-style filtering for PBIC
+    //     // ------------------------------------------------------------------
+    //     TaskState s = getTaskState(robot_state, task_point_mode, T_flange_tcp);
+
+    //     static int pbic_fext_motion_id = -1;
+    //     static bool pbic_fext_filter_init = false;
+    //     static Eigen::Matrix<float, 6, 1> Fext_prev = Eigen::Matrix<float, 6, 1>::Zero();
+    //     static Eigen::Matrix<float, 6, 1> Fext_filt = Eigen::Matrix<float, 6, 1>::Zero();
+
+    //     if (pbic_fext_motion_id != operator_call_count_) {
+    //         pbic_fext_motion_id = operator_call_count_;
+    //         pbic_fext_filter_init = false;
+    //         Fext_prev.setZero();
+    //         Fext_filt.setZero();
+    //     }
+
+    //     Eigen::Matrix<float, 6, 6> J_inv = dampedPseudoInverse(s.J, 5e-3f);
+    //     Eigen::Matrix<float, 6, 1> Fext_raw = -1.0f * J_inv.transpose() * trq_ext;
+
+    //     Eigen::Matrix<float, 6, 1> Fext = Fext_raw;
+
+    //     Eigen::Matrix<float, 6, 1> fext_abs_limit;
+    //     fext_abs_limit << 400.0f, 400.0f, 200.0f, 50.0f, 50.0f, 50.0f;
+
+    //     const float force_slew_rate  = 2000.0f;
+    //     const float torque_slew_rate = 200.0f;
+
+    //     Eigen::Matrix<float, 6, 1> fext_delta_limit;
+    //     fext_delta_limit << force_slew_rate * dt,
+    //                         force_slew_rate * dt,
+    //                         force_slew_rate * dt,
+    //                         torque_slew_rate * dt,
+    //                         torque_slew_rate * dt,
+    //                         torque_slew_rate * dt;
+
+    //     if (!pbic_fext_filter_init) {
+    //         Fext_prev = Fext;
+    //         Fext_filt = Fext;
+    //         pbic_fext_filter_init = true;
+    //     }
+
+    //     for (int i = 0; i < 6; ++i) {
+    //         float delta = Fext(i) - Fext_prev(i);
+
+    //         if (delta >  fext_delta_limit(i)) delta =  fext_delta_limit(i);
+    //         if (delta < -fext_delta_limit(i)) delta = -fext_delta_limit(i);
+
+    //         Fext(i) = Fext_prev(i) + delta;
+
+    //         if (Fext(i) >  fext_abs_limit(i)) Fext(i) =  fext_abs_limit(i);
+    //         if (Fext(i) < -fext_abs_limit(i)) Fext(i) = -fext_abs_limit(i);
+    //     }
+
+    //     const float alpha_fext = 0.80f;
+    //     Fext_filt = alpha_fext * Fext + (1.0f - alpha_fext) * Fext_filt;
+    //     Fext_prev = Fext;
+
+    //     F_ext = Fext_filt;
+    //     //
+    //     Eigen::Matrix<float, 6, 1> imp_C = Eigen::Matrix<float, 6, 1>::Zero();
+
+    //     // imp_C = M_inv * (M * acc + B * vel + K * pos + F_ext); // considering external force
+    //     // // imp_C = M_inv * (M * acc + B * vel + K * pos); // Not considering external force 
+
+    //     // rungeKutta(t_start, imp.pos_m, imp.vel_m, imp_C);
+
+    //     // imp.acc_m = M_inv * (-1 * B * imp.vel_m - K * imp.pos_m) + imp_C;
+    //     // F_imp = M * (acc - imp.acc_m) + B * (vel - imp.vel_m) + K * (pos - imp.pos_m);
+
+    //     // ✅ .head(6)을 사용해 앞의 6칸(X,Y,Z,Roll,Pitch,Yaw)만 추출하여 연산
+    //     // imp_C = M_inv * (M * acc.head(6) + B * vel.head(6) + K * pos.head(6) + F_ext); 
+
+    //     // rungeKutta(t_start, imp.pos_m, imp.vel_m, imp_C);
+
+    //     // imp.acc_m = M_inv * (-1 * B * imp.vel_m - K * imp.pos_m) + imp_C;
+        
+    //     // // ✅ 여기도 .head(6) 적용
+    //     // F_imp = M * (acc.head(6) - imp.acc_m) + B * (vel.head(6) - imp.vel_m) + K * (pos.head(6) - imp.pos_m);
+
+    //     // imp_C = M_inv * (M * acc_euler + B * vel_euler + K * pos_euler + F_ext);
+
+    //     // PBIC outer impedance model
+    //     // xdd_m = xdd_d + M^{-1}[ B(xd_dot - x_m_dot) + K(xd - x_m) - F_int ]
+    //     // F_ext는 environment-on-robot 기준으로 사용
+
+    //     imp_C = M_inv * (M * acc_euler + B * vel_euler + K * pos_euler - F_ext);
+
+    //     rungeKutta(t_start, imp.pos_m, imp.vel_m, imp_C);
+
+    //     imp.acc_m = M_inv * (-1 * B * imp.vel_m - K * imp.pos_m) + imp_C;
+
+    //     F_imp = M * (acc_euler - imp.acc_m)
+    //         + B * (vel_euler - imp.vel_m)
+    //         + K * (pos_euler - imp.pos_m);
+
+    //     for (int i = 0; i < 6; i++)
+    //     {
+    //         F.Fext[i] = F_ext(i);
+    //         F.Fimp[i] = F_imp(i); 
+    //     }
+
+    //     // transform Eigen::Matrix to float[6]
+        
+    //     float x_d[6] = {0,};
+    //     float x_d2[6] = {0,};
+        
+    //     Eigen::VectorXf::Map(&x_d[0], 6) = imp.pos_m; // Impedance mode
+    
+
+    //     // trajectory는 이미 fillEulerDummyForIK()를 거쳐
+    //     // quaternion -> continuous Euler dummy 로 변환된 상태다.
+    //     // 따라서 여기의 pos_euler(3..5)는 raw quaternion이 아니라
+    //     // [roll, pitch, yaw] [deg] 값이다.
+    //     x_d[3] = pos_euler(3);
+    //     x_d[4] = pos_euler(4);
+    //     x_d[5] = pos_euler(5);
+
+    //     float current_joint[NUMBER_OF_JOINT] = {0,};
+    //     memcpy(current_joint, robot_state->actual_joint_position, sizeof(float) * 6);
+
+    //     // 새 motion 시작 시 branch continuity 기준을 현재 joint로 맞춤
+    //     if (count_motion == 0) {
+    //         memcpy(previous_joint_command,
+    //                robot_state->actual_joint_position,
+    //                sizeof(float) * 6);
+    //     }
+    //     //new0410
+    //     // ------------------------------------------------------------------
+    //     // IK를 하나의 solution space로만 풀지 말고,
+    //     // 이전 command와 가장 가까운 해를 선택해서 branch jump를 줄인다.
+    //     // ------------------------------------------------------------------
+    //     // float best_des[NUMBER_OF_JOINT] = {0,};
+    //     // bool found_solution = false;
+    //     // float best_cost = 1.0e30f;
+    //     // int best_sol_space = sol_space;
+
+    //     // for (int cand_sol = 0; cand_sol < 8; ++cand_sol) {
+    //     //     LPINVERSE_KINEMATIC_RESPONSE cand =
+    //     //         Drfl_.ikin(x_d, cand_sol, COORDINATE_SYSTEM_WORLD, 1);
+
+    //     //     if (cand == nullptr) {
+    //     //         continue;
+    //     //     }
+
+    //     //     float cost = 0.0f;
+    //     //     for (int i = 0; i < 6; ++i) {
+    //     //         float delta = cand->_fTargetPos[i] - previous_joint_command[i];
+    //     //         while (delta > 180.0f) delta -= 360.0f;
+    //     //         while (delta < -180.0f) delta += 360.0f;
+    //     //         cost += delta * delta;
+    //     //     }
+
+    //     //     if (cost < best_cost) {
+    //     //         best_cost = cost;
+    //     //         best_sol_space = cand_sol;
+    //     //         for (int i = 0; i < 6; ++i) {
+    //     //             best_des[i] = cand->_fTargetPos[i];
+    //     //         }
+    //     //         found_solution = true;
+    //     //     }
+    //     // }
+
+    //     // if (!found_solution) {
+    //     //     ROS_WARN("MotionGenerator: IK failed for all solution spaces. Holding previous joint command.");
+
+    //     //     for (int i = 0; i < 6; ++i) {
+    //     //         des[i] = previous_joint_command[i];
+    //     //     }
+
+    //     //     singularity_counter++;
+    //     //     if (singularity_counter >= 10) {
+    //     //         is_singular = true;
+    //     //     }
+
+    //     //     return {des, is_singular};
+    //     // }
+
+    //     // sol_space = best_sol_space;
+    //     // for (int i = 0; i < 6; ++i) {
+    //     //     des[i] = best_des[i];
+    //     // }
+
+    //     // // ------------------------------------------------------------------
+    //     // // 여기서 보는 것은 "실제 singularity"가 아니라
+    //     // // IK branch jump(갑작스러운 해 점프)다.
+    //     // // current_joint가 아니라 previous_joint_command와 비교해야 한다.
+    //     // // ------------------------------------------------------------------
+    //     // bool branch_jump = false;
+    //     // int jump_joint = -1;
+    //     // float jump_delta = 0.0f;
+
+    //     // for (int i = 0; i < 6; ++i) {
+    //     //     float delta = des[i] - previous_joint_command[i];
+    //     //     while (delta > 180.0f) delta -= 360.0f;
+    //     //     while (delta < -180.0f) delta += 360.0f;
+
+    //     //     // 기존 20 deg는 너무 예민해서 false positive가 잘 난다.
+    //     //     if (std::abs(delta) > 35.0f) {
+    //     //         branch_jump = true;
+    //     //         jump_joint = i;
+    //     //         jump_delta = delta;
+    //     //         singularity_counter++;
+    //     //         break;
+    //     //     }
+    //     // }
+
+    //     // if (branch_jump) {
+    //     //     std::cout << "IK branch jump at joint " << jump_joint
+    //     //               << ", prev_cmd : " << previous_joint_command[jump_joint]
+    //     //               << ", ik_cmd : " << des[jump_joint]
+    //     //               << ", delta : " << jump_delta
+    //     //               << ", sol_space : " << best_sol_space << std::endl;
+    //     //     ROS_WARN("IK branch jump detected");
+
+    //     //     // 갑자기 다른 branch로 튀는 해는 쓰지 않고 이전 command를 유지
+    //     //     for (int i = 0; i < 6; ++i) {
+    //     //         des[i] = previous_joint_command[i];
+    //     //     }
+    //     // } else {
+    //     //     singularity_counter = 0;
+    //     // }
+
+    //     // if (singularity_counter >= 10) {
+    //     //     ROS_WARN("IK branch jump persisted for 10 frames. Exiting motion.");
+    //     //     is_singular = true;
+    //     // }
+    //     // 새 motion 시작 시 branch continuity 기준을 현재 joint로 맞춤
+    //     if (count_motion == 0) {
+    //         memcpy(previous_joint_command,
+    //                robot_state->actual_joint_position,
+    //                sizeof(float) * 6);
+
+    //         // 현재 로봇이 실제로 있는 branch를 seed로 들고 간다.
+    //         sol_space = static_cast<int>(robot_state->solution_space);
+    //     }
+
+    //     auto wrapDeltaDeg = [](float delta) {
+    //         while (delta > 180.0f) delta -= 360.0f;
+    //         while (delta < -180.0f) delta += 360.0f;
+    //         return delta;
+    //     };
+
+    //     auto evaluateIkCandidate = [&](int cand_sol,
+    //                                    float out_des[NUMBER_OF_JOINT],
+    //                                    float& out_cost,
+    //                                    float& out_max_delta_deg) -> bool {
+    //         LPINVERSE_KINEMATIC_RESPONSE cand =
+    //             Drfl_.ikin(x_d, cand_sol, COORDINATE_SYSTEM_WORLD, 1);
+
+    //         if (cand == nullptr) {
+    //             return false;
+    //         }
+
+    //         out_cost = 0.0f;
+    //         out_max_delta_deg = 0.0f;
+
+    //         for (int i = 0; i < 6; ++i) {
+    //             float delta_prev = wrapDeltaDeg(cand->_fTargetPos[i] - previous_joint_command[i]);
+    //             float delta_curr = wrapDeltaDeg(cand->_fTargetPos[i] - current_joint[i]);
+
+    //             // continuity는 previous command 기준, current joint는 보조 가중치만 줌
+    //             out_cost += delta_prev * delta_prev + 0.05f * delta_curr * delta_curr;
+    //             out_max_delta_deg = std::max(out_max_delta_deg, std::fabs(delta_prev));
+
+    //             out_des[i] = cand->_fTargetPos[i];
+    //         }
+
+    //         return true;
+    //     };
+
+    //     constexpr float kFastAcceptMaxDeltaDeg = 12.0f;   // 이 이하면 현재 branch 유지
+    //     constexpr float kHardJumpRejectDeg    = 35.0f;    // 이것보다 크면 해를 버림
+
+    //     float best_des[NUMBER_OF_JOINT] = {0,};
+    //     bool found_solution = false;
+    //     float best_cost = 1.0e30f;
+    //     int best_sol_space = sol_space;
+
+    //     bool need_full_scan = (count_motion == 0);
+
+    //     // ------------------------------------------------------------
+    //     // 1) 첫 프레임은 무조건 8개 전부 탐색
+    //     // 2) 그 다음부터는 현재 sol_space 하나만 먼저 풀어본다
+    //     // 3) 현재 branch가 실패하거나 continuity가 나쁘면 그때만 8개 재탐색
+    //     // ------------------------------------------------------------
+    //     if (!need_full_scan) {
+    //         float cand_des[NUMBER_OF_JOINT] = {0,};
+    //         float cand_cost = 0.0f;
+    //         float cand_max_delta_deg = 0.0f;
+
+    //         if (evaluateIkCandidate(sol_space,
+    //                                 cand_des,
+    //                                 cand_cost,
+    //                                 cand_max_delta_deg) &&
+    //             cand_max_delta_deg <= kFastAcceptMaxDeltaDeg) {
+    //             found_solution = true;
+    //             best_cost = cand_cost;
+    //             best_sol_space = sol_space;
+
+    //             for (int i = 0; i < 6; ++i) {
+    //                 best_des[i] = cand_des[i];
+    //             }
+    //         } else {
+    //             need_full_scan = true;
+    //         }
+    //     }
+
+    //     if (need_full_scan) {
+    //         found_solution = false;
+    //         best_cost = 1.0e30f;
+
+    //         for (int cand_sol = 0; cand_sol < 8; ++cand_sol) {
+    //             float cand_des[NUMBER_OF_JOINT] = {0,};
+    //             float cand_cost = 0.0f;
+    //             float cand_max_delta_deg = 0.0f;
+
+    //             if (!evaluateIkCandidate(cand_sol,
+    //                                      cand_des,
+    //                                      cand_cost,
+    //                                      cand_max_delta_deg)) {
+    //                 continue;
+    //             }
+
+    //             if (cand_cost < best_cost) {
+    //                 best_cost = cand_cost;
+    //                 best_sol_space = cand_sol;
+
+    //                 for (int i = 0; i < 6; ++i) {
+    //                     best_des[i] = cand_des[i];
+    //                 }
+    //                 found_solution = true;
+    //             }
+    //         }
+    //     }
+
+    //     if (!found_solution) {
+    //         ROS_WARN("MotionGenerator: IK failed for current branch and all 8 solution spaces. Holding previous joint command.");
+
+    //         for (int i = 0; i < 6; ++i) {
+    //             des[i] = previous_joint_command[i];
+    //         }
+
+    //         singularity_counter++;
+    //         if (singularity_counter >= 10) {
+    //             is_singular = true;
+    //         }
+
+    //         return {des, is_singular};
+    //     }
+
+    //     // ------------------------------------------------------------
+    //     // 최종 branch jump guard
+    //     // full scan 후에도 너무 큰 joint discontinuity면 그 해는 버린다.
+    //     // ------------------------------------------------------------
+    //     bool branch_jump = false;
+    //     int jump_joint = -1;
+    //     float jump_delta = 0.0f;
+
+    //     for (int i = 0; i < 6; ++i) {
+    //         float delta = wrapDeltaDeg(best_des[i] - previous_joint_command[i]);
+
+    //         if (std::abs(delta) > kHardJumpRejectDeg) {
+    //             branch_jump = true;
+    //             jump_joint = i;
+    //             jump_delta = delta;
+    //             singularity_counter++;
+    //             break;
+    //         }
+    //     }
+
+    //     if (branch_jump) {
+    //         std::cout << "IK branch jump at joint " << jump_joint
+    //                   << ", prev_cmd : " << previous_joint_command[jump_joint]
+    //                   << ", ik_cmd : " << best_des[jump_joint]
+    //                   << ", delta : " << jump_delta
+    //                   << ", candidate sol_space : " << best_sol_space
+    //                   << std::endl;
+
+    //         ROS_WARN("IK branch jump detected, holding previous joint command.");
+
+    //         for (int i = 0; i < 6; ++i) {
+    //             des[i] = previous_joint_command[i];
+    //         }
+    //     } else {
+    //         singularity_counter = 0;
+
+    //         for (int i = 0; i < 6; ++i) {
+    //             des[i] = best_des[i];
+    //         }
+
+    //         // 이때만 다음 루프에 branch를 계승한다.
+    //         sol_space = best_sol_space;
+    //     }
+
+    //     if (singularity_counter >= 10) {
+    //         ROS_WARN("IK branch jump persisted for 10 frames. Exiting motion.");
+    //         is_singular = true;
+    //     }
+
+    //     std::copy(robot_state->actual_flange_position,
+    //               robot_state->actual_flange_position + 6,
+    //               begin(prev.xPrev));
+
+    //     Eigen::VectorXf::Map(&prev.vPrev[0], 6) = imp.vel_m;
+    //     Eigen::VectorXf::Map(&prev.F_extPrev[0], 6) = F_ext;
+
+    //     for (int i = 0; i < 6; ++i) {
+    //         previous_joint_command[i] = des[i];
+    //     }
+
+    //     count_motion++;
+
+    //     return {des, is_singular};
+    // }
+    //new0412
+    std::pair<std::array<float, 6>, bool> PBIC::MotionGenerator(
+        Trajectory &trajectory,
+        const LPRT_OUTPUT_DATA_LIST robot_state,
+        Prev &prev,
+        Impedance &imp,
+        int& sol_space,
+        bool correction_flag,
+        int operator_call_count_,
+        TaskPointMode task_point_mode,
+        const Eigen::Isometry3f& T_flange_tcp)
     {
+        (void)correction_flag;
+
         static int singularity_counter = 0;
+        static bool zyz_ref_initialized = false;
+        static float prev_zyz_deg[3] = {0.0f, 0.0f, 0.0f};
+
         bool is_singular = false;
         std::array<float, 6> des = {0, };
-        LPRT_OUTPUT_DATA_LIST robot_data = Drfl_.read_data_rt();
-        Eigen::Map<const Eigen::Matrix<float, 6, 1>> q(robot_state->actual_joint_position);
-        Eigen::Map<const Eigen::Matrix<float, 6, 1>> x(robot_state->actual_flange_position);
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> xPrev(prev.xPrev.data());
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> vPrev(prev.vPrev.data());
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> qPrev(prev.qPrev.data());
-    
-        Eigen::Map<const Eigen::Matrix<float, 6, 1>> trq_raw(robot_state->actual_joint_torque);
-        Eigen::Map<Eigen::Matrix<float, 6, 1>> trq_ext(robot_state->external_joint_torque);
-        Eigen::Map<const Eigen::Matrix<float, 6, 1>> trq_g(robot_state->gravity_torque);
+
+        Eigen::Map<const Eigen::Matrix<float, 6, 1>> tau_ext(robot_state->external_joint_torque);
         Eigen::Map<Eigen::Matrix<float, 6, 1>> F_extPrev(prev.F_extPrev.data());
-        // Eigen::Map<Eigen::Matrix<float, 6, 1>> pos(trajectory.pos_d.data());
-        // Eigen::Map<Eigen::Matrix<float, 6, 1>> vel(trajectory.vel_d.data());
-        // Eigen::Map<Eigen::Matrix<float, 6, 1>> acc(trajectory.acc_d.data());
 
-        // // ✅ 물리적 크기인 7차원으로 우선 매핑
-        // Eigen::Map<Eigen::Matrix<float, 7, 1>> pos(trajectory.pos_d.data());
-        // Eigen::Map<Eigen::Matrix<float, 7, 1>> vel(trajectory.vel_d.data());
-        // Eigen::Map<Eigen::Matrix<float, 7, 1>> acc(trajectory.acc_d.data());
+        // ------------------------------------------------------------
+        // Desired task-space trajectory
+        // translation: [mm], [mm/s], [mm/s^2]
+        // rotation   : quaternion + angular velocity/acceleration
+        // ------------------------------------------------------------
+        Eigen::Vector3f p_d;
+        p_d << trajectory.pos_d[0], trajectory.pos_d[1], trajectory.pos_d[2];
 
-        // 여기서 trajectory는 fillEulerDummyForIK()를 거친 Euler dummy trajectory입니다.
-        // 따라서 앞의 6개만 [x, y, z, roll, pitch, yaw]로 사용해야 합니다.
-        Eigen::Map<const Eigen::Matrix<float, 6, 1>> pos_euler(trajectory.pos_d.data());
-        Eigen::Map<const Eigen::Matrix<float, 6, 1>> vel_euler(trajectory.vel_d.data());
-        Eigen::Map<const Eigen::Matrix<float, 6, 1>> acc_euler(trajectory.acc_d.data());
+        Eigen::Vector3f v_d;
+        v_d << trajectory.vel_d[0], trajectory.vel_d[1], trajectory.vel_d[2];
 
-        Eigen::Matrix<float, 6, 6> JPrev;
-        float qd_sing[NUMBER_OF_JOINT] = {0,};
-        Eigen::Matrix<float, 6, 1> v = 0.05 * (x - xPrev) / dt + 0.95 * vPrev;
-        float q_input_array[NUMBER_OF_JOINT]  = {0,};
-        float trq_ext_input_array[NUMBER_OF_JOINT] = {0,};
-        float task_p_input_array[NUMBER_OF_JOINT] = {0,};
-        float jacobianMatrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT] = {{0,}};
-        float F_box[NUMBER_OF_JOINT] = {0,};
+        Eigen::Vector3f a_d;
+        a_d << trajectory.acc_d[0], trajectory.acc_d[1], trajectory.acc_d[2];
 
+        Eigen::Quaternionf q_d = quatFromPose7(trajectory.pos_d);
+        alignQuatHemisphere(q_d, imp.q_m);
 
-        memcpy(q_input_array, robot_state->actual_joint_position, sizeof(float) * 6);
-        memcpy(trq_ext_input_array, robot_state->external_joint_torque, sizeof(float) * 6);
-        memcpy(task_p_input_array, robot_state->target_tcp_position, sizeof(float) * 6);
-        memcpy(jacobianMatrix, robot_data->jacobian_matrix, NUMBER_OF_JOINT * NUMBER_OF_JOINT * sizeof(float));
-        memcpy(F_box, robot_data->external_tcp_force, NUMBER_OF_JOINT * sizeof(float));
+        Eigen::Vector3f w_d;
+        w_d << trajectory.w_d[0], trajectory.w_d[1], trajectory.w_d[2];
 
-        Eigen::Matrix<float, 6, 6> J;
+        Eigen::Vector3f alpha_d;
+        alpha_d << trajectory.alpha_d[0], trajectory.alpha_d[1], trajectory.alpha_d[2];
 
-        for (int i = 0; i < NUMBER_OF_JOINT; ++i) {
-            for (int j = 0; j < NUMBER_OF_JOINT; ++j) {
-                J(i,j) = jacobianMatrix[i][j];
-            }
-            // F_ext(i) = F_box[i];
-            // 노이즈로 인한 토크 발산을 막기 위해 로우패스 필터(LPF) 적용 복구
-            F_ext(i) = 0.1f * F_box[i] + 0.9f * F_extPrev(i);
-            F_ext(i) = 0;
-        }
-
-        Eigen::Matrix<float, 1, 6> q_input_matrix;
-        Eigen::Matrix<float, 1, 6> task_p_input_matrix;
-        Eigen::Matrix<float, 1, 6> trq_ext_input_matrix;
-
-        for (int i = 0; i < 6; ++i) {
-            q_input_matrix(0, i) = q_input_array[i];
-            task_p_input_matrix(0, i) = task_p_input_array[i];
-            trq_ext_input_matrix(0, i) = trq_ext_input_array[i];
-        }
-
-        // F_estim = F_estimate(q_input_matrix, task_p_input_matrix, trq_ext_input_matrix);
-        
-        // external force estimation 
-        // F_ext = 0.1 * (J.transpose().inverse() * (trq_ext) - F_offset) + 0.9 * F_extPrev; // w/ Gripper 
-        // F_ext = 0.1 * (J.transpose().inverse() * (trq_ext) - F_estim) + 0.9 * F_extPrev; // w/ Gripper learning
-        // F_ext = 0.1 * (J.transpose().inverse() * (trq_ext)) + 0.9 * F_extPrev; // w/o Gripper 
-
-        // F_ext = (J.transpose().inverse() * (trq_ext)) - F_offset;``````
-
-        // Remove moment
-        // F_ext[3] = 0;
-        // F_ext[4] = 0;
-        // F_ext[5] = 0;
-        // 
-
-        // 2. utilize force sensor
-        for (int i = 0 ; i < 6 ; i++) {
-            F_sensor[i] = sensor_data.AFT_wrench_[i];
-        }
-        
-        // consider adhere frame
-        float(*result)[3] = Drfl_.get_current_rotm();
-
-        F_sensor_matched[0] = -F_sensor[0];
-        F_sensor_matched[1] = -F_sensor[1];
-        F_sensor_matched[2] = F_sensor[2];
-        F_sensor_matched[3] = -F_sensor[3];
-        F_sensor_matched[4] = -F_sensor[4];
-        F_sensor_matched[5] = F_sensor[5];
-
-        Eigen::Matrix3f rotationMatrix;
-        for (int i = 0; i < 3; ++i) {
-            for (int j = 0; j < 3; ++j) {
-                rotationMatrix(i, j) = result[i][j];
-            }
-        }
-
-        Eigen::Vector3f forceVector(F_sensor_matched[0], F_sensor_matched[1], F_sensor_matched[2]);
-        Eigen::Vector3f torqueVector(F_sensor_matched[3], F_sensor_matched[4], F_sensor_matched[5]);
-
-        // Step 3: Multiply the vectors by the rotation matrix
-        Eigen::Vector3f rotatedForce = rotationMatrix * forceVector;
-        Eigen::Vector3f rotatedTorque = rotationMatrix * torqueVector;
-
-        F_sensor_matched[0] = rotatedForce(0);  // Rotated x-force
-        F_sensor_matched[1] = rotatedForce(1);  // Rotated y-force
-        F_sensor_matched[2] = rotatedForce(2);  // Rotated z-force
-
-        F_sensor_matched[3] = rotatedTorque(0);  // Rotated x-torque
-        F_sensor_matched[4] = rotatedTorque(1);  // Rotated y-torque
-        F_sensor_matched[5] = rotatedTorque(2);  // Rotated z-torque
-        
-        // F_ext = 0.2 * F_sensor + 0.8 * F_extPrev - F_offset; // Sensor value -> External force 
-
-        for (int i = 0 ; i < 6 ; i++) {
-            sensor_data.AFT_wrench_matched[i] = F_sensor_matched[i]; 
-        }
-        //new0411
-        // ------------------------------------------------------------------
+        // ------------------------------------------------------------
         // external_joint_torque -> task wrench
-        // DBIC-style filtering for PBIC
-        // ------------------------------------------------------------------
+        // DBIC-style filtering
+        // ------------------------------------------------------------
         TaskState s = getTaskState(robot_state, task_point_mode, T_flange_tcp);
 
         static int pbic_fext_motion_id = -1;
@@ -1060,10 +1803,12 @@ namespace SKKU
             pbic_fext_filter_init = false;
             Fext_prev.setZero();
             Fext_filt.setZero();
+            singularity_counter = 0;
+            zyz_ref_initialized = false;
         }
 
         Eigen::Matrix<float, 6, 6> J_inv = dampedPseudoInverse(s.J, 5e-3f);
-        Eigen::Matrix<float, 6, 1> Fext_raw = -1.0f * J_inv.transpose() * trq_ext;
+        Eigen::Matrix<float, 6, 1> Fext_raw = -1.0f * J_inv.transpose() * tau_ext;
 
         Eigen::Matrix<float, 6, 1> Fext = Fext_raw;
 
@@ -1104,183 +1849,115 @@ namespace SKKU
         Fext_prev = Fext;
 
         F_ext = Fext_filt;
-        //
-        Eigen::Matrix<float, 6, 1> imp_C = Eigen::Matrix<float, 6, 1>::Zero();
 
-        // imp_C = M_inv * (M * acc + B * vel + K * pos + F_ext); // considering external force
-        // // imp_C = M_inv * (M * acc + B * vel + K * pos); // Not considering external force 
+        // ------------------------------------------------------------
+        // motion start initialization
+        // ------------------------------------------------------------
+        if (count_motion == 0) {
+            memcpy(previous_joint_command,
+                robot_state->actual_joint_position,
+                sizeof(float) * 6);
 
-        // rungeKutta(t_start, imp.pos_m, imp.vel_m, imp_C);
+            sol_space = static_cast<int>(robot_state->solution_space);
 
-        // imp.acc_m = M_inv * (-1 * B * imp.vel_m - K * imp.pos_m) + imp_C;
-        // F_imp = M * (acc - imp.acc_m) + B * (vel - imp.vel_m) + K * (pos - imp.pos_m);
-
-        // ✅ .head(6)을 사용해 앞의 6칸(X,Y,Z,Roll,Pitch,Yaw)만 추출하여 연산
-        // imp_C = M_inv * (M * acc.head(6) + B * vel.head(6) + K * pos.head(6) + F_ext); 
-
-        // rungeKutta(t_start, imp.pos_m, imp.vel_m, imp_C);
-
-        // imp.acc_m = M_inv * (-1 * B * imp.vel_m - K * imp.pos_m) + imp_C;
-        
-        // // ✅ 여기도 .head(6) 적용
-        // F_imp = M * (acc.head(6) - imp.acc_m) + B * (vel.head(6) - imp.vel_m) + K * (pos.head(6) - imp.pos_m);
-
-        // imp_C = M_inv * (M * acc_euler + B * vel_euler + K * pos_euler + F_ext);
-
-        // PBIC outer impedance model
-        // xdd_m = xdd_d + M^{-1}[ B(xd_dot - x_m_dot) + K(xd - x_m) - F_int ]
-        // F_ext는 environment-on-robot 기준으로 사용
-
-        imp_C = M_inv * (M * acc_euler + B * vel_euler + K * pos_euler - F_ext);
-
-        rungeKutta(t_start, imp.pos_m, imp.vel_m, imp_C);
-
-        imp.acc_m = M_inv * (-1 * B * imp.vel_m - K * imp.pos_m) + imp_C;
-
-        F_imp = M * (acc_euler - imp.acc_m)
-            + B * (vel_euler - imp.vel_m)
-            + K * (pos_euler - imp.pos_m);
-
-        for (int i = 0; i < 6; i++)
-        {
-            F.Fext[i] = F_ext(i);
-            F.Fimp[i] = F_imp(i); 
+            prev_zyz_deg[0] = robot_state->actual_flange_position[3];
+            prev_zyz_deg[1] = robot_state->actual_flange_position[4];
+            prev_zyz_deg[2] = robot_state->actual_flange_position[5];
+            zyz_ref_initialized = true;
         }
 
-        // transform Eigen::Matrix to float[6]
-        
-        float x_d[6] = {0,};
-        float x_d2[6] = {0,};
-        
-        Eigen::VectorXf::Map(&x_d[0], 6) = imp.pos_m; // Impedance mode
-    
+        // ------------------------------------------------------------
+        // Quaternion-based PBIC outer impedance model
+        // ------------------------------------------------------------
+        rungeKuttaPoseQuaternion(imp,
+                                p_d,
+                                v_d,
+                                a_d,
+                                q_d,
+                                w_d,
+                                alpha_d,
+                                F_ext,
+                                M,
+                                B,
+                                K,
+                                M_inv,
+                                dt,
+                                n);
 
-        // trajectory는 이미 fillEulerDummyForIK()를 거쳐
-        // quaternion -> continuous Euler dummy 로 변환된 상태다.
-        // 따라서 여기의 pos_euler(3..5)는 raw quaternion이 아니라
-        // [roll, pitch, yaw] [deg] 값이다.
-        x_d[3] = pos_euler(3);
-        x_d[4] = pos_euler(4);
-        x_d[5] = pos_euler(5);
+        syncImpedanceLegacyMirror(imp,
+                                prev_zyz_deg[0],
+                                prev_zyz_deg[1],
+                                prev_zyz_deg[2]);
+
+        prev_zyz_deg[0] = imp.pos_m(3);
+        prev_zyz_deg[1] = imp.pos_m(4);
+        prev_zyz_deg[2] = imp.pos_m(5);
+
+        // ------------------------------------------------------------
+        // logging force / impedance residual
+        // ------------------------------------------------------------
+        Eigen::Quaternionf q_d_err = q_d;
+        alignQuatHemisphere(q_d_err, imp.q_m);
+        const Eigen::Vector3f e_R = quatLogError(q_d_err, imp.q_m);
+
+        Eigen::Vector3f Mlin;
+        Mlin << M(0, 0), M(1, 1), M(2, 2);
+
+        Eigen::Vector3f Blin;
+        Blin << B(0, 0), B(1, 1), B(2, 2);
+
+        Eigen::Vector3f Klin;
+        Klin << K(0, 0), K(1, 1), K(2, 2);
+
+        Eigen::Vector3f Mrot;
+        Mrot << M(3, 3) * RAD2DEG,
+                M(4, 4) * RAD2DEG,
+                M(5, 5) * RAD2DEG;
+
+        Eigen::Vector3f Brot;
+        Brot << B(3, 3) * RAD2DEG,
+                B(4, 4) * RAD2DEG,
+                B(5, 5) * RAD2DEG;
+
+        Eigen::Vector3f Krot;
+        Krot << K(3, 3) * RAD2DEG,
+                K(4, 4) * RAD2DEG,
+                K(5, 5) * RAD2DEG;
+
+        F_imp.setZero();
+        F_imp.head<3>() =
+            Mlin.cwiseProduct(a_d - imp.a_m)
+        + Blin.cwiseProduct(v_d - imp.v_m)
+        + Klin.cwiseProduct(p_d - imp.p_m);
+
+        F_imp.tail<3>() =
+            Mrot.cwiseProduct(alpha_d - imp.alpha_m)
+        + Brot.cwiseProduct(w_d - imp.w_m)
+        + Krot.cwiseProduct(e_R);
+
+        for (int i = 0; i < 6; ++i) {
+            F.Fext[i]   = F_ext(i);
+            F.Fimp[i]   = F_imp(i);
+            F.F_PBIC[i] = F_imp(i);
+            F.F_task[i] = F_imp(i) - F_ext(i);
+        }
+
+        // ------------------------------------------------------------
+        // IK input:
+        // position  = impedance translation state
+        // orientation = impedance quaternion state -> continuous ZYZ
+        // ------------------------------------------------------------
+        float x_d[6] = {0,};
+
+        x_d[0] = imp.p_m(0);
+        x_d[1] = imp.p_m(1);
+        x_d[2] = imp.p_m(2);
+        x_d[3] = imp.pos_m(3);
+        x_d[4] = imp.pos_m(4);
+        x_d[5] = imp.pos_m(5);
 
         float current_joint[NUMBER_OF_JOINT] = {0,};
         memcpy(current_joint, robot_state->actual_joint_position, sizeof(float) * 6);
-
-        // 새 motion 시작 시 branch continuity 기준을 현재 joint로 맞춤
-        if (count_motion == 0) {
-            memcpy(previous_joint_command,
-                   robot_state->actual_joint_position,
-                   sizeof(float) * 6);
-        }
-        //new0410
-        // ------------------------------------------------------------------
-        // IK를 하나의 solution space로만 풀지 말고,
-        // 이전 command와 가장 가까운 해를 선택해서 branch jump를 줄인다.
-        // ------------------------------------------------------------------
-        // float best_des[NUMBER_OF_JOINT] = {0,};
-        // bool found_solution = false;
-        // float best_cost = 1.0e30f;
-        // int best_sol_space = sol_space;
-
-        // for (int cand_sol = 0; cand_sol < 8; ++cand_sol) {
-        //     LPINVERSE_KINEMATIC_RESPONSE cand =
-        //         Drfl_.ikin(x_d, cand_sol, COORDINATE_SYSTEM_WORLD, 1);
-
-        //     if (cand == nullptr) {
-        //         continue;
-        //     }
-
-        //     float cost = 0.0f;
-        //     for (int i = 0; i < 6; ++i) {
-        //         float delta = cand->_fTargetPos[i] - previous_joint_command[i];
-        //         while (delta > 180.0f) delta -= 360.0f;
-        //         while (delta < -180.0f) delta += 360.0f;
-        //         cost += delta * delta;
-        //     }
-
-        //     if (cost < best_cost) {
-        //         best_cost = cost;
-        //         best_sol_space = cand_sol;
-        //         for (int i = 0; i < 6; ++i) {
-        //             best_des[i] = cand->_fTargetPos[i];
-        //         }
-        //         found_solution = true;
-        //     }
-        // }
-
-        // if (!found_solution) {
-        //     ROS_WARN("MotionGenerator: IK failed for all solution spaces. Holding previous joint command.");
-
-        //     for (int i = 0; i < 6; ++i) {
-        //         des[i] = previous_joint_command[i];
-        //     }
-
-        //     singularity_counter++;
-        //     if (singularity_counter >= 10) {
-        //         is_singular = true;
-        //     }
-
-        //     return {des, is_singular};
-        // }
-
-        // sol_space = best_sol_space;
-        // for (int i = 0; i < 6; ++i) {
-        //     des[i] = best_des[i];
-        // }
-
-        // // ------------------------------------------------------------------
-        // // 여기서 보는 것은 "실제 singularity"가 아니라
-        // // IK branch jump(갑작스러운 해 점프)다.
-        // // current_joint가 아니라 previous_joint_command와 비교해야 한다.
-        // // ------------------------------------------------------------------
-        // bool branch_jump = false;
-        // int jump_joint = -1;
-        // float jump_delta = 0.0f;
-
-        // for (int i = 0; i < 6; ++i) {
-        //     float delta = des[i] - previous_joint_command[i];
-        //     while (delta > 180.0f) delta -= 360.0f;
-        //     while (delta < -180.0f) delta += 360.0f;
-
-        //     // 기존 20 deg는 너무 예민해서 false positive가 잘 난다.
-        //     if (std::abs(delta) > 35.0f) {
-        //         branch_jump = true;
-        //         jump_joint = i;
-        //         jump_delta = delta;
-        //         singularity_counter++;
-        //         break;
-        //     }
-        // }
-
-        // if (branch_jump) {
-        //     std::cout << "IK branch jump at joint " << jump_joint
-        //               << ", prev_cmd : " << previous_joint_command[jump_joint]
-        //               << ", ik_cmd : " << des[jump_joint]
-        //               << ", delta : " << jump_delta
-        //               << ", sol_space : " << best_sol_space << std::endl;
-        //     ROS_WARN("IK branch jump detected");
-
-        //     // 갑자기 다른 branch로 튀는 해는 쓰지 않고 이전 command를 유지
-        //     for (int i = 0; i < 6; ++i) {
-        //         des[i] = previous_joint_command[i];
-        //     }
-        // } else {
-        //     singularity_counter = 0;
-        // }
-
-        // if (singularity_counter >= 10) {
-        //     ROS_WARN("IK branch jump persisted for 10 frames. Exiting motion.");
-        //     is_singular = true;
-        // }
-        // 새 motion 시작 시 branch continuity 기준을 현재 joint로 맞춤
-        if (count_motion == 0) {
-            memcpy(previous_joint_command,
-                   robot_state->actual_joint_position,
-                   sizeof(float) * 6);
-
-            // 현재 로봇이 실제로 있는 branch를 seed로 들고 간다.
-            sol_space = static_cast<int>(robot_state->solution_space);
-        }
 
         auto wrapDeltaDeg = [](float delta) {
             while (delta > 180.0f) delta -= 360.0f;
@@ -1289,9 +1966,9 @@ namespace SKKU
         };
 
         auto evaluateIkCandidate = [&](int cand_sol,
-                                       float out_des[NUMBER_OF_JOINT],
-                                       float& out_cost,
-                                       float& out_max_delta_deg) -> bool {
+                                    float out_des[NUMBER_OF_JOINT],
+                                    float& out_cost,
+                                    float& out_max_delta_deg) -> bool {
             LPINVERSE_KINEMATIC_RESPONSE cand =
                 Drfl_.ikin(x_d, cand_sol, COORDINATE_SYSTEM_WORLD, 1);
 
@@ -1306,18 +1983,16 @@ namespace SKKU
                 float delta_prev = wrapDeltaDeg(cand->_fTargetPos[i] - previous_joint_command[i]);
                 float delta_curr = wrapDeltaDeg(cand->_fTargetPos[i] - current_joint[i]);
 
-                // continuity는 previous command 기준, current joint는 보조 가중치만 줌
                 out_cost += delta_prev * delta_prev + 0.05f * delta_curr * delta_curr;
                 out_max_delta_deg = std::max(out_max_delta_deg, std::fabs(delta_prev));
-
                 out_des[i] = cand->_fTargetPos[i];
             }
 
             return true;
         };
 
-        constexpr float kFastAcceptMaxDeltaDeg = 12.0f;   // 이 이하면 현재 branch 유지
-        constexpr float kHardJumpRejectDeg    = 35.0f;    // 이것보다 크면 해를 버림
+        constexpr float kFastAcceptMaxDeltaDeg = 12.0f;
+        constexpr float kHardJumpRejectDeg    = 35.0f;
 
         float best_des[NUMBER_OF_JOINT] = {0,};
         bool found_solution = false;
@@ -1326,11 +2001,6 @@ namespace SKKU
 
         bool need_full_scan = (count_motion == 0);
 
-        // ------------------------------------------------------------
-        // 1) 첫 프레임은 무조건 8개 전부 탐색
-        // 2) 그 다음부터는 현재 sol_space 하나만 먼저 풀어본다
-        // 3) 현재 branch가 실패하거나 continuity가 나쁘면 그때만 8개 재탐색
-        // ------------------------------------------------------------
         if (!need_full_scan) {
             float cand_des[NUMBER_OF_JOINT] = {0,};
             float cand_cost = 0.0f;
@@ -1363,9 +2033,9 @@ namespace SKKU
                 float cand_max_delta_deg = 0.0f;
 
                 if (!evaluateIkCandidate(cand_sol,
-                                         cand_des,
-                                         cand_cost,
-                                         cand_max_delta_deg)) {
+                                        cand_des,
+                                        cand_cost,
+                                        cand_max_delta_deg)) {
                     continue;
                 }
 
@@ -1396,10 +2066,6 @@ namespace SKKU
             return {des, is_singular};
         }
 
-        // ------------------------------------------------------------
-        // 최종 branch jump guard
-        // full scan 후에도 너무 큰 joint discontinuity면 그 해는 버린다.
-        // ------------------------------------------------------------
         bool branch_jump = false;
         int jump_joint = -1;
         float jump_delta = 0.0f;
@@ -1418,11 +2084,11 @@ namespace SKKU
 
         if (branch_jump) {
             std::cout << "IK branch jump at joint " << jump_joint
-                      << ", prev_cmd : " << previous_joint_command[jump_joint]
-                      << ", ik_cmd : " << best_des[jump_joint]
-                      << ", delta : " << jump_delta
-                      << ", candidate sol_space : " << best_sol_space
-                      << std::endl;
+                    << ", prev_cmd : " << previous_joint_command[jump_joint]
+                    << ", ik_cmd : " << best_des[jump_joint]
+                    << ", delta : " << jump_delta
+                    << ", candidate sol_space : " << best_sol_space
+                    << std::endl;
 
             ROS_WARN("IK branch jump detected, holding previous joint command.");
 
@@ -1436,7 +2102,6 @@ namespace SKKU
                 des[i] = best_des[i];
             }
 
-            // 이때만 다음 루프에 branch를 계승한다.
             sol_space = best_sol_space;
         }
 
@@ -1446,10 +2111,16 @@ namespace SKKU
         }
 
         std::copy(robot_state->actual_flange_position,
-                  robot_state->actual_flange_position + 6,
-                  begin(prev.xPrev));
+                robot_state->actual_flange_position + 6,
+                begin(prev.xPrev));
 
-        Eigen::VectorXf::Map(&prev.vPrev[0], 6) = imp.vel_m;
+        prev.vPrev[0] = imp.v_m(0);
+        prev.vPrev[1] = imp.v_m(1);
+        prev.vPrev[2] = imp.v_m(2);
+        prev.vPrev[3] = imp.w_m(0) * RAD2DEG;
+        prev.vPrev[4] = imp.w_m(1) * RAD2DEG;
+        prev.vPrev[5] = imp.w_m(2) * RAD2DEG;
+
         Eigen::VectorXf::Map(&prev.F_extPrev[0], 6) = F_ext;
 
         for (int i = 0; i < 6; ++i) {
@@ -1457,9 +2128,8 @@ namespace SKKU
         }
 
         count_motion++;
-
         return {des, is_singular};
-    }
+    }  //  
 
     void PBIC::printMatrixWithTabs(const Eigen::Matrix<float, 6, 6>& matrix, const std::string& name) {
     std::cout << name << ":\n";

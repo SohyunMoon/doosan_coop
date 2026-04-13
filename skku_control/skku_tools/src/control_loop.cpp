@@ -3045,6 +3045,18 @@ namespace {
         rpy[2] = unwrapNear(rpy[2], ref_yaw_deg);
         return rpy;
     }
+    //new0412
+    inline std::array<float, 3> quatToEulerDegZYZ(const Eigen::Quaternionf& q_in) {
+        Eigen::Quaternionf q = normalizeQuat(q_in);
+        Eigen::Vector3f euler_zyz = q.toRotationMatrix().eulerAngles(2, 1, 2);
+
+        return {
+            euler_zyz[0] * RAD2DEG,   // z1
+            euler_zyz[1] * RAD2DEG,   // y
+            euler_zyz[2] * RAD2DEG    // z2
+        };
+    }
+    //
 
     inline void writeQuatXYZW(const Eigen::Quaternionf& q_in, float* dst_xyzw) {
         Eigen::Quaternionf q = normalizeQuat(q_in);
@@ -3197,40 +3209,46 @@ namespace {
         g_pbic_goal_motion_failed = false;
         g_pbic_goal_elapsed_sec = 0.0;
     }    
+    //new0412
+    // void fillEulerDummyForIK(const SKKU::Trajectory& src_quat, SKKU::Trajectory& dst_euler) {
+    //     dst_euler = src_quat;
 
-    void fillEulerDummyForIK(const SKKU::Trajectory& src_quat, SKKU::Trajectory& dst_euler) {
-        dst_euler = src_quat;
+    //     Eigen::Quaternionf q = quatFromPose7(src_quat.pos_d);
 
-        Eigen::Quaternionf q = quatFromPose7(src_quat.pos_d);
+    //     std::array<float, 3> rpy;
+    //     if (g_fill_euler_dummy_first) {
+    //         rpy = quatToEulerDegZYX(q);
+    //         g_fill_euler_dummy_first = false;
+    //     } else {
+    //         rpy = quatToEulerDegZYXNear(
+    //             q,
+    //             g_fill_euler_dummy_prev_rpy[0],
+    //             g_fill_euler_dummy_prev_rpy[1],
+    //             g_fill_euler_dummy_prev_rpy[2]);
+    //     }
 
-        std::array<float, 3> rpy;
-        if (g_fill_euler_dummy_first) {
-            rpy = quatToEulerDegZYX(q);
-            g_fill_euler_dummy_first = false;
-        } else {
-            rpy = quatToEulerDegZYXNear(
-                q,
-                g_fill_euler_dummy_prev_rpy[0],
-                g_fill_euler_dummy_prev_rpy[1],
-                g_fill_euler_dummy_prev_rpy[2]);
-        }
+    //     g_fill_euler_dummy_prev_rpy[0] = rpy[0];
+    //     g_fill_euler_dummy_prev_rpy[1] = rpy[1];
+    //     g_fill_euler_dummy_prev_rpy[2] = rpy[2];
 
-        g_fill_euler_dummy_prev_rpy[0] = rpy[0];
-        g_fill_euler_dummy_prev_rpy[1] = rpy[1];
-        g_fill_euler_dummy_prev_rpy[2] = rpy[2];
+    //     dst_euler.pos_d[3] = rpy[0];
+    //     dst_euler.pos_d[4] = rpy[1];
+    //     dst_euler.pos_d[5] = rpy[2];
 
-        dst_euler.pos_d[3] = rpy[0];
-        dst_euler.pos_d[4] = rpy[1];
-        dst_euler.pos_d[5] = rpy[2];
+    //     dst_euler.vel_d[3] = 0.0f;
+    //     dst_euler.vel_d[4] = 0.0f;
+    //     dst_euler.vel_d[5] = 0.0f;
 
-        dst_euler.vel_d[3] = 0.0f;
-        dst_euler.vel_d[4] = 0.0f;
-        dst_euler.vel_d[5] = 0.0f;
-
-        dst_euler.acc_d[3] = 0.0f;
-        dst_euler.acc_d[4] = 0.0f;
-        dst_euler.acc_d[5] = 0.0f;
+    //     dst_euler.acc_d[3] = 0.0f;
+    //     dst_euler.acc_d[4] = 0.0f;
+    //     dst_euler.acc_d[5] = 0.0f;
+    // }
+    void fillEulerDummyForIK(const SKKU::Trajectory& src_quat, SKKU::Trajectory& dst_quat) {
+        // quaternion trajectory를 그대로 유지한다.
+        // ZYZ 변환은 MotionGenerator() 내부, IK 직전에만 수행한다.
+        dst_quat = src_quat;
     }
+    //
     //new0324
     void logRequestedGoalPose(ControlLoop* loop,
                               const moveit_msgs::CartesianTrajectory& msg) {
@@ -3284,9 +3302,12 @@ void TrajectoryGen::init(moveit_msgs::CartesianTrajectory msg,
     for (int i = 0; i < 3; ++i) {
         start_point[i] = current_position[i];
     }
-
+    //new0412
+    // Eigen::Quaternionf q_start =
+    //     quatFromEulerDeg(current_position[3], current_position[4], current_position[5]);
     Eigen::Quaternionf q_start =
-        quatFromEulerDeg(current_position[3], current_position[4], current_position[5]);
+        quatFromEulerZYZDegSequence(current_position[3], current_position[4], current_position[5]);    
+    //
     writeQuatXYZW(q_start, &start_point[3]);
 
     goal[0] = msg.points[0].point.pose.position.x;
@@ -3361,10 +3382,12 @@ std::vector<std::array<double, 7>> TrajectoryGen::quadraticInterpolation(const s
 std::vector<std::array<double, 7>> TrajectoryGen::upsampleTrajectory(const moveit_msgs::CartesianTrajectory& msg, int newPointsNum) {
     int originalPointsNum = msg.points.size();
     std::vector<std::array<double, 7>> controlPoints(originalPointsNum);
-
+    //new0412
+    // Eigen::Quaternionf q_prev =
+    //     quatFromEulerDeg(current_position[3], current_position[4], current_position[5]);
     Eigen::Quaternionf q_prev =
-        quatFromEulerDeg(current_position[3], current_position[4], current_position[5]);
-
+        quatFromEulerZYZDegSequence(current_position[3], current_position[4], current_position[5]);
+    //
     for (int i = 0; i < originalPointsNum; ++i) {
         Eigen::Quaternionf q_i =
             isZeroQuatMsg(msg.points[i].point.pose.orientation)
@@ -3397,8 +3420,12 @@ std::vector<std::array<double, 7>> TrajectoryGen::upsampleTrajectory(const movei
 
     float current_pos_7d[7];
     for (int k = 0; k < 3; ++k) current_pos_7d[k] = current_position[k];
+        //new0412
+        // Eigen::Quaternionf q_curr =
+        //     quatFromEulerDeg(current_position[3], current_position[4], current_position[5]);
         Eigen::Quaternionf q_curr =
-            quatFromEulerDeg(current_position[3], current_position[4], current_position[5]);
+            quatFromEulerZYZDegSequence(current_position[3], current_position[4], current_position[5]);
+        //        
 
         writeQuatXYZW(q_curr, &current_pos_7d[3]);
 
@@ -5076,6 +5103,28 @@ bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state,
         trajectory.vel_d[5] = 0.0f;
         trajectory.vel_d[6] = 0.0f;
 
+        // trajectory.acc_d[0] = ref_task.a_d(0) * 1000.0f;
+        // trajectory.acc_d[1] = ref_task.a_d(1) * 1000.0f;
+        // trajectory.acc_d[2] = ref_task.a_d(2) * 1000.0f;
+        // trajectory.acc_d[3] = 0.0f;
+        // trajectory.acc_d[4] = 0.0f;
+        // trajectory.acc_d[5] = 0.0f;
+        // trajectory.acc_d[6] = 0.0f;
+
+        // Trajectory dummy_traj_for_ik;
+        // fillEulerDummyForIK(trajectory, dummy_traj_for_ik);
+        // //new0410
+        // auto [output, is_singular] =
+        //     MotionGenerator(dummy_traj_for_ik,
+        //                     robot_state,
+        //                     prev,
+        //                     imp,
+        //                     sol_space,
+        //                     correction_flag,
+        //                     operator_call_count_,
+        //                     task_point_mode_,
+        //                     T_flange_tcp_);
+        //new0412
         trajectory.acc_d[0] = ref_task.a_d(0) * 1000.0f;
         trajectory.acc_d[1] = ref_task.a_d(1) * 1000.0f;
         trajectory.acc_d[2] = ref_task.a_d(2) * 1000.0f;
@@ -5084,11 +5133,20 @@ bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state,
         trajectory.acc_d[5] = 0.0f;
         trajectory.acc_d[6] = 0.0f;
 
-        Trajectory dummy_traj_for_ik;
-        fillEulerDummyForIK(trajectory, dummy_traj_for_ik);
-        //new0410
+        trajectory.w_d = {
+            ref_task.w_d(0),
+            ref_task.w_d(1),
+            ref_task.w_d(2)
+        };
+
+        trajectory.alpha_d = {
+            ref_task.alpha_d(0),
+            ref_task.alpha_d(1),
+            ref_task.alpha_d(2)
+        };
+
         auto [output, is_singular] =
-            MotionGenerator(dummy_traj_for_ik,
+            MotionGenerator(trajectory,
                             robot_state,
                             prev,
                             imp,
@@ -5097,7 +5155,7 @@ bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state,
                             operator_call_count_,
                             task_point_mode_,
                             T_flange_tcp_);
-
+        //
         if (is_singular) {
             g_pbic_goal_motion_failed = true;
             std::cout << "PBIC spinMotion(): singularity / IK branch jump detected." << std::endl;
@@ -5125,13 +5183,26 @@ bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state,
             trajectory.vel_d[i] = tra.vel[i];
             trajectory.acc_d[i] = tra.acc[i];
         }
+        //new0412
+        // Trajectory dummy_traj_for_ik;
+        // fillEulerDummyForIK(trajectory, dummy_traj_for_ik);
 
-        Trajectory dummy_traj_for_ik;
-        fillEulerDummyForIK(trajectory, dummy_traj_for_ik);
+        // //new0410
+        // auto [output, is_singular] =
+        //     MotionGenerator(dummy_traj_for_ik,
+        //                     robot_state,
+        //                     prev,
+        //                     imp,
+        //                     sol_space,
+        //                     correction_flag,
+        //                     operator_call_count_,
+        //                     task_point_mode_,
+        //                     T_flange_tcp_);//
+        trajectory.w_d = {0.0f, 0.0f, 0.0f};
+        trajectory.alpha_d = {0.0f, 0.0f, 0.0f};
 
-        //new0410
         auto [output, is_singular] =
-            MotionGenerator(dummy_traj_for_ik,
+            MotionGenerator(trajectory,
                             robot_state,
                             prev,
                             imp,
@@ -5139,7 +5210,8 @@ bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state,
                             correction_flag,
                             operator_call_count_,
                             task_point_mode_,
-                            T_flange_tcp_);//
+                            T_flange_tcp_);
+        //        
 
         if (is_singular) {
             std::cout << "Singularity occurred! Exiting loop." << std::endl;
@@ -5207,19 +5279,32 @@ bool ControlLoop::spinMotion_path(const LPRT_OUTPUT_DATA_LIST& robot_state,
         trajectory.vel_d[i] = 0.0f;
         trajectory.acc_d[i] = 0.0f;
     }
+    //new0412
+    // Trajectory dummy_traj_for_ik;
+    // fillEulerDummyForIK(trajectory, dummy_traj_for_ik);
+    // //new0411
+    // // auto [output, is_singular] =
+    // //     MotionGenerator(dummy_traj_for_ik, robot_state, prev, imp,
+    // //                     sol_space, correction_flag, operator_call_count_);
+    // // auto [output, is_singular] =
+    // // MotionGenerator(dummy_traj_for_ik, robot_state, prev, imp,
+    // //                 sol_space, correction_flag, operator_call_count_,
+    // //                 task_point_mode_, T_flange_tcp_);
+    // auto [output, is_singular] =
+    //     MotionGenerator(dummy_traj_for_ik,
+    //                     robot_state,
+    //                     prev,
+    //                     imp,
+    //                     sol_space,
+    //                     correction_flag,
+    //                     operator_call_count_,
+    //                     task_point_mode_,
+    //                     T_flange_tcp_);    //
+    trajectory.w_d = {0.0f, 0.0f, 0.0f};
+    trajectory.alpha_d = {0.0f, 0.0f, 0.0f};
 
-    Trajectory dummy_traj_for_ik;
-    fillEulerDummyForIK(trajectory, dummy_traj_for_ik);
-    //new0411
-    // auto [output, is_singular] =
-    //     MotionGenerator(dummy_traj_for_ik, robot_state, prev, imp,
-    //                     sol_space, correction_flag, operator_call_count_);
-    // auto [output, is_singular] =
-    // MotionGenerator(dummy_traj_for_ik, robot_state, prev, imp,
-    //                 sol_space, correction_flag, operator_call_count_,
-    //                 task_point_mode_, T_flange_tcp_);
     auto [output, is_singular] =
-        MotionGenerator(dummy_traj_for_ik,
+        MotionGenerator(trajectory,
                         robot_state,
                         prev,
                         imp,
@@ -5227,7 +5312,8 @@ bool ControlLoop::spinMotion_path(const LPRT_OUTPUT_DATA_LIST& robot_state,
                         correction_flag,
                         operator_call_count_,
                         task_point_mode_,
-                        T_flange_tcp_);    //
+                        T_flange_tcp_);
+    //
 
     if (is_singular) {
         return false;
@@ -5549,6 +5635,7 @@ void ControlLoop::dataSaving() {
     float traj_quat[4] = {0,};         
     float orientation_error[3] = {0,};  
 
+
     //new0324
     float raw_actual_flange_position[NUMBER_OF_JOINT] = {0,};
     float raw_actual_tcp_position[NUMBER_OF_JOINT] = {0,};
@@ -5573,6 +5660,8 @@ void ControlLoop::dataSaving() {
     float s_v_log[3] = {0,};
     float ref_w_d_log[3] = {0,};
     float s_w_log[3] = {0,};
+    float impedance_quat[4] = {0,};      // [qx qy qz qw]
+    float impedance_pose7[7] = {0,};     // [x y z qx qy qz qw]
     //
 
     /*new0317
@@ -5741,7 +5830,10 @@ void ControlLoop::dataSaving() {
         traj_position_6d[2] = traj_position[2]; 
 
         Eigen::Quaternionf q_traj_log(traj_position[6], traj_position[3], traj_position[4], traj_position[5]);
-        auto traj_rpy = quatToEulerDegZYX(q_traj_log);
+        //new0412
+        // auto traj_rpy = quatToEulerDegZYX(q_traj_log);
+        auto traj_rpy = quatToEulerDegZYZ(q_traj_log);
+        //
 
         traj_position_6d[3] = traj_rpy[0];
         traj_position_6d[4] = traj_rpy[1];
@@ -5916,10 +6008,57 @@ void ControlLoop::dataSaving() {
         actual_quat[0] = q_act.x(); actual_quat[1] = q_act.y(); actual_quat[2] = q_act.z(); actual_quat[3] = q_act.w();
         traj_quat[0] = q_des.x();   traj_quat[1] = q_des.y();   traj_quat[2] = q_des.z();   traj_quat[3] = q_des.w();
         orientation_error[0] = e_rot.x(); orientation_error[1] = e_rot.y(); orientation_error[2] = e_rot.z();
+        //new0412
+        // ------------------------------------------------------------
+        // PBIC quaternion impedance state log
+        // q_m is the real impedance orientation state.
+        // pos_m(3:5) is only ZYZ mirror for IK / compatibility.
+        // ------------------------------------------------------------
+        if (is_pbic_mode) {
+            Eigen::Quaternionf q_imp = imp.q_m;
 
+            if (q_imp.norm() < 1e-6f) {
+                q_imp = Eigen::Quaternionf::Identity();
+            } else {
+                q_imp.normalize();
+            }
+
+            // trajectory quaternion과 같은 hemisphere로 맞춰서
+            // 로그에서 부호가 갑자기 뒤집혀 보이는 것을 방지
+            if (q_des.coeffs().dot(q_imp.coeffs()) < 0.0f) {
+                q_imp.coeffs() *= -1.0f;
+            }
+
+            impedance_quat[0] = q_imp.x();
+            impedance_quat[1] = q_imp.y();
+            impedance_quat[2] = q_imp.z();
+            impedance_quat[3] = q_imp.w();
+
+            // pose7 = [x y z qx qy qz qw]
+            impedance_pose7[0] = imp.p_m(0);
+            impedance_pose7[1] = imp.p_m(1);
+            impedance_pose7[2] = imp.p_m(2);
+            impedance_pose7[3] = impedance_quat[0];
+            impedance_pose7[4] = impedance_quat[1];
+            impedance_pose7[5] = impedance_quat[2];
+            impedance_pose7[6] = impedance_quat[3];
+        } else {
+            impedance_quat[0] = 0.0f;
+            impedance_quat[1] = 0.0f;
+            impedance_quat[2] = 0.0f;
+            impedance_quat[3] = 1.0f;
+
+            for (int i = 0; i < 7; ++i) {
+                impedance_pose7[i] = 0.0f;
+            }
+            impedance_pose7[6] = 1.0f;
+        }
+        //
         logData("actual_quaternion.txt", actual_quat, 4);
         logData("traj_quaternion.txt", traj_quat, 4);
         logData("quat_orientation_error.txt", orientation_error, 3);
+        logData("impedance_quaternion.txt", impedance_quat, 4);
+        logData("impedance_pose7.txt", impedance_pose7, 7);
         
         auto current = std::chrono::high_resolution_clock::now();
         Duration save_time(std::chrono::duration_cast<std::chrono::milliseconds>(current - start));

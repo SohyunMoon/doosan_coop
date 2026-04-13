@@ -197,16 +197,37 @@ public:
 //     std::array<float, 6> vel_d = {0.0};
 //     std::array<float, 6> acc_d = {0.0};
 // };
-
+//new0412
 // [수정 후] -> 전부 7로 변경!
+// class Trajectory {
+// public:
+//     Trajectory() {};
+//     Trajectory(const std::array<float, 7>& pos, const std::array<float, 7>& vel, const std::array<float, 7>& acc) noexcept;
+//     Trajectory(std::initializer_list<float> pos, std::initializer_list<float> vel, std::initializer_list<float> acc);
+//     std::array<float, 7> pos_d = {0.0};
+//     std::array<float, 7> vel_d = {0.0};
+//     std::array<float, 7> acc_d = {0.0};
+// };
 class Trajectory {
 public:
     Trajectory() {};
-    Trajectory(const std::array<float, 7>& pos, const std::array<float, 7>& vel, const std::array<float, 7>& acc) noexcept;
-    Trajectory(std::initializer_list<float> pos, std::initializer_list<float> vel, std::initializer_list<float> acc);
-    std::array<float, 7> pos_d = {0.0};
-    std::array<float, 7> vel_d = {0.0};
-    std::array<float, 7> acc_d = {0.0};
+    Trajectory(const std::array<float, 7>& pos,
+               const std::array<float, 7>& vel,
+               const std::array<float, 7>& acc) noexcept;
+    Trajectory(std::initializer_list<float> pos,
+               std::initializer_list<float> vel,
+               std::initializer_list<float> acc);
+
+    // pose = [x(mm), y(mm), z(mm), qx, qy, qz, qw]
+    std::array<float, 7> pos_d = {0.0f};
+
+    // legacy translation derivatives
+    std::array<float, 7> vel_d = {0.0f};
+    std::array<float, 7> acc_d = {0.0f};
+
+    // quaternion-based rotational motion
+    std::array<float, 3> w_d = {0.0f, 0.0f, 0.0f};        // [rad/s]
+    std::array<float, 3> alpha_d = {0.0f, 0.0f, 0.0f};    // [rad/s^2]
 };
 
 class Total_trajectory {
@@ -275,12 +296,31 @@ struct TaskState {
     Eigen::Matrix<float, 6, 1> F_env_on_robot = Eigen::Matrix<float, 6, 1>::Zero(); // [N; Nm]
 };
 // Impedance 구조체 정의
+//new0412
+// typedef struct _Impedance {
+//     Eigen::Matrix<float, 6, 1> pos_m = Eigen::Matrix<float, 6, 1>::Constant(0.0);
+//     Eigen::Matrix<float, 6, 1> vel_m = Eigen::Matrix<float, 6, 1>::Constant(0.0);
+//     Eigen::Matrix<float, 6, 1> acc_m = Eigen::Matrix<float, 6, 1>::Constant(0.0);
+// } Impedance, *LPImpedance;
 typedef struct _Impedance {
-    Eigen::Matrix<float, 6, 1> pos_m = Eigen::Matrix<float, 6, 1>::Constant(0.0);
-    Eigen::Matrix<float, 6, 1> vel_m = Eigen::Matrix<float, 6, 1>::Constant(0.0);
-    Eigen::Matrix<float, 6, 1> acc_m = Eigen::Matrix<float, 6, 1>::Constant(0.0);
-} Impedance, *LPImpedance;
+    // translational impedance state [mm]
+    Eigen::Vector3f p_m = Eigen::Vector3f::Zero();
+    Eigen::Vector3f v_m = Eigen::Vector3f::Zero();
+    Eigen::Vector3f a_m = Eigen::Vector3f::Zero();
 
+    // rotational impedance state
+    Eigen::Quaternionf q_m = Eigen::Quaternionf::Identity();
+    Eigen::Vector3f w_m = Eigen::Vector3f::Zero();        // [rad/s]
+    Eigen::Vector3f alpha_m = Eigen::Vector3f::Zero();    // [rad/s^2]
+
+    // legacy mirror for logging / compatibility
+    // pos_m = [x, y, z, z1, y, z2] in [mm, deg]
+    // vel_m / acc_m tail = angular components in [deg/s], [deg/s^2] for logging only
+    Eigen::Matrix<float, 6, 1> pos_m = Eigen::Matrix<float, 6, 1>::Constant(0.0f);
+    Eigen::Matrix<float, 6, 1> vel_m = Eigen::Matrix<float, 6, 1>::Constant(0.0f);
+    Eigen::Matrix<float, 6, 1> acc_m = Eigen::Matrix<float, 6, 1>::Constant(0.0f);
+} Impedance, *LPImpedance;
+//
 // Sensor_data 클래스를 추가하여 AFT_wrench를 관리하고 ROS 메시지 구독
 class Sensor_data {
 public:
