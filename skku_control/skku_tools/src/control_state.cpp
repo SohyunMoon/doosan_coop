@@ -6,18 +6,83 @@
 
 namespace SKKU {
 
+    // // Sensor_data 클래스의 생성자
+    // Sensor_data::Sensor_data() {
+    //     // ROS 노드 핸들 초기화 및 콜백 함수 연결
+    //     sensor_sub_ = nh_.subscribe("/sensor_data", 10, &Sensor_data::sensorDataCallback, this);
+    // }
+
+    // // 센서 데이터를 반환하는 함수
+    // std::array<float, 6> Sensor_data::getAFTWrench() const {
+    //     return AFT_wrench_;
+    // }
+
+    // // ROS 콜백 함수: 센서 데이터 업데이트
+    // void Sensor_data::sensorDataCallback(const std_msgs::Float32MultiArray::ConstPtr& msg) {
+    //     if (msg->data.size() >= 6) {
+    //         for (int i = 0; i < 6; ++i) {
+    //             AFT_wrench_[i] = msg->data[i];
+    //         }
+    //     }
+    // }
+
     // Sensor_data 클래스의 생성자
     Sensor_data::Sensor_data() {
         // ROS 노드 핸들 초기화 및 콜백 함수 연결
         sensor_sub_ = nh_.subscribe("/sensor_data", 10, &Sensor_data::sensorDataCallback, this);
     }
 
-    // 센서 데이터를 반환하는 함수
+    // raw sensor wrench 반환
     std::array<float, 6> Sensor_data::getAFTWrench() const {
         return AFT_wrench_;
     }
 
-    // ROS 콜백 함수: 센서 데이터 업데이트
+    // matched sensor wrench 반환
+    std::array<float, 6> Sensor_data::getMatchedAFTWrench() const {
+        return AFT_wrench_matched;
+    }
+
+    // raw -> matched frame conversion
+    std::array<float, 6> Sensor_data::matchAFTWrench(const Eigen::Matrix3f& rotationMatrix) {
+        // ------------------------------------------------------------
+        // Step 1) raw sensor frame -> controller frame sign matching
+        // 기존에 네가 쓰던 부호 규칙 그대로 반영
+        // ------------------------------------------------------------
+        std::array<float, 6> matched = {0, 0, 0, 0, 0, 0};
+
+        matched[0] = -AFT_wrench_[0];
+        matched[1] = -AFT_wrench_[1];
+        matched[2] =  AFT_wrench_[2];
+        matched[3] = -AFT_wrench_[3];
+        matched[4] = -AFT_wrench_[4];
+        matched[5] =  AFT_wrench_[5];
+
+        // ------------------------------------------------------------
+        // Step 2) rotate force / torque
+        // force, torque 각각 3x3 rotation 적용
+        // ------------------------------------------------------------
+        Eigen::Vector3f forceVector(matched[0], matched[1], matched[2]);
+        Eigen::Vector3f torqueVector(matched[3], matched[4], matched[5]);
+
+        Eigen::Vector3f rotatedForce  = rotationMatrix * forceVector;
+        Eigen::Vector3f rotatedTorque = rotationMatrix * torqueVector;
+
+        matched[0] = rotatedForce(0);
+        matched[1] = rotatedForce(1);
+        matched[2] = rotatedForce(2);
+
+        matched[3] = rotatedTorque(0);
+        matched[4] = rotatedTorque(1);
+        matched[5] = rotatedTorque(2);
+
+        // ------------------------------------------------------------
+        // Step 3) 내부 저장
+        // ------------------------------------------------------------
+        AFT_wrench_matched = matched;
+        return AFT_wrench_matched;
+    }
+
+    // ROS 콜백 함수: raw sensor data 업데이트
     void Sensor_data::sensorDataCallback(const std_msgs::Float32MultiArray::ConstPtr& msg) {
         if (msg->data.size() >= 6) {
             for (int i = 0; i < 6; ++i) {

@@ -322,23 +322,47 @@ typedef struct _Impedance {
 } Impedance, *LPImpedance;
 //
 // Sensor_data 클래스를 추가하여 AFT_wrench를 관리하고 ROS 메시지 구독
+// class Sensor_data {
+// public:
+//     Sensor_data();
+
+//     // AFT_wrench 데이터를 반환하는 함수
+//     std::array<float, 6> getAFTWrench() const;
+//     std::array<float, 6> AFT_wrench_ = {0, 0, 0, 0, 0, 0};
+//     std::array<float, 6> AFT_wrench_matched = {0, 0, 0, 0, 0, 0};
+
+// private:
+//     // AFT_wrench 데이터를 저장하는 멤버 변수
+
+//     // ROS 관련 멤버 변수
+//     ros::NodeHandle nh_;
+//     ros::Subscriber sensor_sub_;
+
+//     // ROS 콜백 함수: 센서 데이터 업데이트
+//     void sensorDataCallback(const std_msgs::Float32MultiArray::ConstPtr& msg);
+// };
+
 class Sensor_data {
 public:
     Sensor_data();
 
-    // AFT_wrench 데이터를 반환하는 함수
+    // raw sensor wrench 반환
     std::array<float, 6> getAFTWrench() const;
+
+    // frame matching 완료된 wrench 반환
+    std::array<float, 6> getMatchedAFTWrench() const;
+
+    // raw -> matched 변환 수행
+    std::array<float, 6> matchAFTWrench(const Eigen::Matrix3f& rotationMatrix);
+
     std::array<float, 6> AFT_wrench_ = {0, 0, 0, 0, 0, 0};
     std::array<float, 6> AFT_wrench_matched = {0, 0, 0, 0, 0, 0};
 
 private:
-    // AFT_wrench 데이터를 저장하는 멤버 변수
-
-    // ROS 관련 멤버 변수
     ros::NodeHandle nh_;
     ros::Subscriber sensor_sub_;
 
-    // ROS 콜백 함수: 센서 데이터 업데이트
+    // ROS 콜백 함수: raw sensor data 업데이트
     void sensorDataCallback(const std_msgs::Float32MultiArray::ConstPtr& msg);
 };
 

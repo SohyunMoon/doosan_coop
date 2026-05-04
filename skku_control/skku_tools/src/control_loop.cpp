@@ -5879,7 +5879,7 @@ void ControlLoop::dataSaving() {
                 position_error[i] = traj_position_6d[i] - actual_position[i];
             }
 
-            F_external[i] = F.Fext[i];
+            F_external[i] = -F.Fext[i];
             F_impedance[i] = F.Fimp[i];
             F_task_log[i] = F.F_task[i];      // 추가
             F_DBIC[i] = F.F_DBIC[i];
