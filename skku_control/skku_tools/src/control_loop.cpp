@@ -3786,8 +3786,8 @@ ImpedanceControlLoop::ImpedanceControlLoop(moveit_msgs::CartesianTrajectory msg,
     : ControlLoop(msg, loop_time, realtimeconfig, Drfl)
 {
     // 현재 실험은 DBIC
-    // setImpedanceImplMode(ImpedanceImplMode::kDBIC);
-    setImpedanceImplMode(ImpedanceImplMode::kPBIC_TDC);
+    setImpedanceImplMode(ImpedanceImplMode::kDBIC);
+    // setImpedanceImplMode(ImpedanceImplMode::kPBIC_TDC);
 
     ////////////////////////// Flange ////////////////////////// 
     setTaskPointMode(TaskPointMode::kFlange);
@@ -5713,6 +5713,9 @@ void ControlLoop::dataSaving() {
     float coriolisMatrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT] = {{0,}};
     float jacobianMatrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT] = {{0,}};
     float rotationMatrix[3][3] = {{0,}};
+    //new0506
+    Eigen::Matrix3f sensorRotationMatrix = Eigen::Matrix3f::Identity();
+    //
     
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -5842,6 +5845,7 @@ void ControlLoop::dataSaving() {
         for (int i=0; i<3; i++) {
             for (int j=0; j<3; j++) {
                 rotationMatrix[i][j] = result[i][j];
+                sensorRotationMatrix(i, j) = result[i][j];
             }
         }
         // //new0317
@@ -5863,7 +5867,13 @@ void ControlLoop::dataSaving() {
         const bool is_pbic_mode =
             (control_mode_ == "PBIC goal mode" ||
              control_mode_ == "PBIC path mode");
+        //new0506
+        const std::array<float, 6> aft_wrench_raw = sensor_data.getAFTWrench();
 
+        sensor_data.matchAFTWrench(sensorRotationMatrix);
+
+        const std::array<float, 6> aft_wrench_matched = sensor_data.getMatchedAFTWrench();             
+        //
         for (int i = 0; i < 6; ++i) {
             if (is_pbic_mode) {
                 impedance_position[i] = imp.pos_m(i);
@@ -5889,8 +5899,12 @@ void ControlLoop::dataSaving() {
             gripper_torque[i] = trq_gg[i];
             trq_ext_auto[i] = trq_ext2[i];
             trq_ext_cal[i] = trq_raw[i] - trq_g[i];
-            sensor_FT[i] = sensor_data.AFT_wrench_[i];
-            sensor_FT_matched[i] = sensor_data.AFT_wrench_matched[i];
+            //new0506
+            // sensor_FT[i] = sensor_data.AFT_wrench_[i];
+            // sensor_FT_matched[i] = sensor_data.AFT_wrench_matched[i];
+            sensor_FT[i] = aft_wrench_raw[i];
+            sensor_FT_matched[i] = aft_wrench_matched[i];   
+            //         
 
             error[i] = F.error[i];
             error_dot[i] = F.error_dot[i];
