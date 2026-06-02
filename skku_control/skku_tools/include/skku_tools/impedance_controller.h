@@ -219,6 +219,12 @@ namespace SKKU {
         float correctAngleWraparound(float current_x_d[NUMBER_OF_JOINT], float previous_x_d[NUMBER_OF_JOINT], int size);
         Sensor_data sensor_data;
         int count = 0;
+        void getGainLogValues(float M_log[6],
+                            float B_log[6],
+                            float K_log[6],
+                            float K1_log[6],
+                            float K2_log[6],
+                            float M_hat_log[6]) const;
 
     protected:
         float dt;
@@ -288,6 +294,21 @@ namespace SKKU {
 
         bool has_prev_J_dbic_ = false;
         Eigen::Matrix<float, 6, 1> tau_prev_dbic_ = Eigen::Matrix<float, 6, 1>::Zero();
+        bool has_prev_task_vel_dbic_ = false;
+        Eigen::Vector3f prev_task_v_dbic_ = Eigen::Vector3f::Zero();
+        Eigen::Vector3f prev_task_w_dbic_ = Eigen::Vector3f::Zero();
+        bool has_prev_edot_dbic_ = false;
+        Eigen::Matrix<float, 6, 1> prev_edot_dbic_ =
+        Eigen::Matrix<float, 6, 1>::Zero();
+        bool has_xdd_actual_lpf_dbic_ = false;
+        Eigen::Matrix<float, 6, 1> xdd_actual_filt_dbic_ =
+            Eigen::Matrix<float, 6, 1>::Zero();
+        bool has_prev_qdot_dbic_ = false;
+        Eigen::Matrix<float, 6, 1> prev_qdot_dbic_ =
+            Eigen::Matrix<float, 6, 1>::Zero();
+
+        Eigen::Matrix<float, 6, 1> qddot_filt_dbic_ =
+            Eigen::Matrix<float, 6, 1>::Zero();
         // -------------------------------------------------------
 
         float imp_m;

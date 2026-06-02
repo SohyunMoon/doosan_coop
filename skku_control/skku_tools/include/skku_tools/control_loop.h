@@ -466,8 +466,8 @@ class ControlLoop : protected PBIC{
         int sol_space = 0;
         int saving_count = 0;
 
-        // ImpedanceImplMode impedance_impl_mode_ = ImpedanceImplMode::kPBIC_TDC;
-        ImpedanceImplMode impedance_impl_mode_ = ImpedanceImplMode::kDBIC;
+        ImpedanceImplMode impedance_impl_mode_ = ImpedanceImplMode::kPBIC_TDC;
+        // ImpedanceImplMode impedance_impl_mode_ = ImpedanceImplMode::kDBIC;
         // TaskPointMode task_point_mode_ = TaskPointMode::kTCP;
         // Eigen::Isometry3f T_flange_tcp_ = Eigen::Isometry3f::Identity();
 

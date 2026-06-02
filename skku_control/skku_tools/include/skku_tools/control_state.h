@@ -174,8 +174,9 @@ public:
     float F_rest[6] = {0};
     float F_coriolis[6] = {0};
     float F_task[6] = {0};
-    float error[6] = {0};
-    float error_dot[6] = {0};
+    float F_mass[6] = {0};
+    float Fext_joint[6] = {0};  // external_joint_torque -> task wrench estimate
+    float F_imp_val[6] = {0};
 };
 
 class Errors {
@@ -185,6 +186,7 @@ public:
     Errors(std::initializer_list<float> errors, std::initializer_list<float> derrors, std::initializer_list<float> errors_int);
     std::array<float, 6> e = {0.0};
     std::array<float, 6> de = {0.0};
+    std::array<float, 6> dde = {0.0};
     std::array<float, 6> e_integral = {0.0};
 };
 
@@ -288,9 +290,11 @@ struct TaskRef {
 struct TaskState {
     Eigen::Vector3f p = Eigen::Vector3f::Zero();          // [m]
     Eigen::Vector3f v = Eigen::Vector3f::Zero();          // [m/s]
+    Eigen::Vector3f a = Eigen::Vector3f::Zero();          // [m/s^2]
 
     Eigen::Quaternionf q = Eigen::Quaternionf::Identity();
     Eigen::Vector3f w = Eigen::Vector3f::Zero();          // [rad/s]
+    Eigen::Vector3f alpha = Eigen::Vector3f::Zero();  // [rad/s^2]
 
     Eigen::Matrix<float, 6, 6> J = Eigen::Matrix<float, 6, 6>::Zero();
     Eigen::Matrix<float, 6, 1> F_env_on_robot = Eigen::Matrix<float, 6, 1>::Zero(); // [N; Nm]

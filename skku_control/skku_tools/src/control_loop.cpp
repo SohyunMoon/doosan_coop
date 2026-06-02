@@ -3185,10 +3185,15 @@ TrajectoryGen::TraParam tra;
 float distance_threshold = 50; 
 std::vector<uint64_t> loopTimes;
 // new0330 DBIC debug logs shared from impedance_controller.cpp
-std::atomic<float> g_ref_v_d_log[3];
-std::atomic<float> g_s_v_log[3];
-std::atomic<float> g_ref_w_d_log[3];
-std::atomic<float> g_s_w_log[3];
+std::atomic<float> g_ref_task_pose_log[6];
+std::atomic<float> g_s_task_pose_log[6];
+std::atomic<float> g_ref_task_vel_log[6];
+std::atomic<float> g_s_task_vel_log[6];
+std::atomic<float> g_ref_task_acc_log[6];
+std::atomic<float> g_s_task_acc_log[6];
+std::atomic<float> g_imp_task_pose_log[6];
+std::atomic<float> g_imp_task_vel_log[6];
+std::atomic<float> g_imp_task_acc_log[6];
 namespace {
     bool g_fill_euler_dummy_first = true;
     float g_fill_euler_dummy_prev_rpy[3] = {0.f, 0.f, 0.f};
@@ -3769,9 +3774,12 @@ ControlLoop::ControlLoop(moveit_msgs::CartesianTrajectory msg, u_int64_t loop_ti
         throw std::runtime_error("Error : Running kernel does not have realtime capabilities.");
     }
     std::cout << "High priority setting done" << std::endl;
+    // Keep the control thread at realtime priority across consecutive goals.
+    // The original scheduling policy is restored only when ControlLoop is destroyed.
 }
 
 ControlLoop::~ControlLoop() {
+    // Restore the scheduler when the controller object is actually shutting down.
     if (!setScheduling(originalSetting_)) {
         std::cerr << "Failed to restore original scheduling settings" << std::endl;
     } else {
@@ -3786,8 +3794,8 @@ ImpedanceControlLoop::ImpedanceControlLoop(moveit_msgs::CartesianTrajectory msg,
     : ControlLoop(msg, loop_time, realtimeconfig, Drfl)
 {
     // 현재 실험은 DBIC
-    setImpedanceImplMode(ImpedanceImplMode::kDBIC);
-    // setImpedanceImplMode(ImpedanceImplMode::kPBIC_TDC);
+    // setImpedanceImplMode(ImpedanceImplMode::kDBIC);
+    setImpedanceImplMode(ImpedanceImplMode::kPBIC_TDC);
 
     ////////////////////////// Flange ////////////////////////// 
     setTaskPointMode(TaskPointMode::kFlange);
@@ -4291,7 +4299,8 @@ void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& m
     sol_space = 0;
     count = 0;
     count_motion = 0;
-
+    errors = Errors();
+    std::fill(prev.derrPrev.begin(), prev.derrPrev.end(), 0.0f);
     if (msg.points.empty()) {
         ROS_ERROR("Empty CartesianTrajectory received.");
         fail = 2;
@@ -4331,6 +4340,7 @@ void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& m
     const float st = static_cast<float>(loop_time_) / 1000.0f;
 
     auto start = std::chrono::high_resolution_clock::now();
+    auto log_start = std::chrono::high_resolution_clock::now();
     auto start_time = std::chrono::high_resolution_clock::now();
 
     loopTimes.clear();
@@ -4502,8 +4512,6 @@ void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& m
     std::cout << "[INFO] Final position error: " << distance_mm << " mm\n";
     std::cout << "======================================================\n\n";
 
-    setScheduling(originalSetting_);
-
     if (fail != 2) {
         if (distance_mm > distance_threshold) fail = 2;
         else fail = 1;
@@ -4537,6 +4545,7 @@ void ImpedanceControlLoop::runPBICPath(const moveit_msgs::CartesianTrajectory& m
     count = 0;
     sol_space = 0;
     count_motion = 0;
+    errors = Errors();
     resetFillEulerDummyForIKState();
 
     Duration control_loop_time = Duration(loop_time_);
@@ -4650,7 +4659,6 @@ void ImpedanceControlLoop::runPBICPath(const moveit_msgs::CartesianTrajectory& m
     previous_msg = msg;
     controlState = false;
 
-    setScheduling(originalSetting_);
     float final_position[NUMBER_OF_JOINT] = {0, };
     memcpy(final_position, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
 
@@ -4672,6 +4680,7 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
     control_mode_ = "DBIC goal mode";
     operator_call_count_++;
     count = 0;
+    errors = Errors();
 
     if (msg.points.empty()) {
         ROS_ERROR("Empty CartesianTrajectory received.");
@@ -4870,8 +4879,6 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
     std::cout << "[INFO] Final position error: " << distance_mm << " mm\n";
     std::cout << "======================================================\n\n";
 
-    setScheduling(originalSetting_);
-
     // 이미 중간에 fail=2가 났으면 그 상태를 유지해야 한다.
     if (fail != 2) {
         if (distance_mm > distance_threshold) fail = 2;
@@ -4893,6 +4900,7 @@ void ImpedanceControlLoop::runDBICPath(const moveit_msgs::CartesianTrajectory& m
     control_mode_ = "DBIC path mode";
     operator_call_count_++;
     count = 0;
+    errors = Errors();
 
     Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE);
     Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
@@ -4984,8 +4992,6 @@ void ImpedanceControlLoop::runDBICPath(const moveit_msgs::CartesianTrajectory& m
     std::cout << "[INFO] DB-IC Path Finished. Elapsed time: "
               << elapsed_time.count() << " ms\n";
     std::cout << "[INFO] Final path endpoint error: " << distance_mm << " mm\n";
-
-    setScheduling(originalSetting_);
 
     if (distance_mm > distance_threshold) fail = 2;
     else fail = 1;
@@ -5594,24 +5600,44 @@ void ControlLoop::gaindataSavingThread() {
 }
 
 void ControlLoop::dataSaving() {
+    float imp_task_pose_log[6] = {0,};
+    float imp_task_vel_log[6] = {0,};
+    float imp_task_acc_log[6] = {0,};
     float trq_g[NUMBER_OF_JOINT] = {0,};
     float actual_position[NUMBER_OF_JOINT] = {0,};
     float actual_velocity[NUMBER_OF_JOINT] = {0,};
     float trq_raw[NUMBER_OF_JOINT] = {0,};
     float trq_act[NUMBER_OF_JOINT] = {0,};
+    float ref_task_pose_log[6] = {0,};
+    float s_task_pose_log[6] = {0,};
 
+    float ref_task_vel_log[6] = {0,};
+    float s_task_vel_log[6] = {0,};
+
+    float ref_task_acc_log[6] = {0,};
+    float s_task_acc_log[6] = {0,};
+
+    float M_gain_log[6] = {0,};
+    float B_gain_log[6] = {0,};
+    float K_gain_log[6] = {0,};
+    float K1_gain_log[6] = {0,};
+    float K2_gain_log[6] = {0,};
+    float M_hat_gain_log[6] = {0,};
+    bool gains_logged = false;
     float traj_position[7] = {0,};
     float traj_velocity[7] = {0,};    
     float traj_acceleration[7] = {0,}; 
-
+    float actual_velocity_jacobian[NUMBER_OF_JOINT] = {0,};
     float actual_positionj[NUMBER_OF_JOINT] = {0,};
     float actual_velocityj[NUMBER_OF_JOINT] = {0,};
     float accelerationj[NUMBER_OF_JOINT] = {0,};
     float filtered_accelerationj[NUMBER_OF_JOINT] = {0,}; 
     float impedance_position[NUMBER_OF_JOINT] = {0,};
     float F_external[NUMBER_OF_JOINT] = {0,};
+    float F_imp_val[NUMBER_OF_JOINT] = {0,};
+    float F_external_joint[NUMBER_OF_JOINT] = {0,};
     float F_task_log[NUMBER_OF_JOINT] = {0,};   // 추가
-    float F_DBIC[NUMBER_OF_JOINT] = {0,};
+    float F_Mass[NUMBER_OF_JOINT] = {0,};
     float F_rest[NUMBER_OF_JOINT] = {0,};
     float F_coriolis[NUMBER_OF_JOINT] = {0,};
     float position_command[NUMBER_OF_JOINT] = {0,};
@@ -5655,11 +5681,9 @@ void ControlLoop::dataSaving() {
     float Raw_external_force[NUMBER_OF_TASK] = {0,};
     float error[NUMBER_OF_TASK] = {0,};
     float error_dot[NUMBER_OF_TASK] = {0,};
+    float error_2dot[NUMBER_OF_TASK] = {0,};
+    float error_integral[NUMBER_OF_TASK] = {0,};
 
-    float ref_v_d_log[3] = {0,};
-    float s_v_log[3] = {0,};
-    float ref_w_d_log[3] = {0,};
-    float s_w_log[3] = {0,};
     float impedance_quat[4] = {0,};      // [qx qy qz qw]
     float impedance_pose7[7] = {0,};     // [x y z qx qy qz qw]
     //
@@ -5713,12 +5737,27 @@ void ControlLoop::dataSaving() {
     float coriolisMatrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT] = {{0,}};
     float jacobianMatrix[NUMBER_OF_JOINT][NUMBER_OF_JOINT] = {{0,}};
     float rotationMatrix[3][3] = {{0,}};
-    //new0506
-    Eigen::Matrix3f sensorRotationMatrix = Eigen::Matrix3f::Identity();
-    //
     
     auto start = std::chrono::high_resolution_clock::now();
+    auto log_start = std::chrono::high_resolution_clock::now();
+    if (!gains_logged) {
+        getGainLogValues(M_gain_log,
+                        B_gain_log,
+                        K_gain_log,
+                        K1_gain_log,
+                        K2_gain_log,
+                        M_hat_gain_log);
 
+        logData("gain_M.txt", M_gain_log, 6);
+        logData("gain_B.txt", B_gain_log, 6);
+        logData("gain_K.txt", K_gain_log, 6);
+
+        logData("gain_K1.txt", K1_gain_log, 6);
+        logData("gain_K2.txt", K2_gain_log, 6);
+        logData("gain_M_hat.txt", M_hat_gain_log, 6);
+
+        gains_logged = true;
+    }
     while (data_saving_running_){
         
         LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
@@ -5761,8 +5800,40 @@ void ControlLoop::dataSaving() {
         memcpy(massMatrix, robot_state->mass_matrix, NUMBER_OF_JOINT * NUMBER_OF_JOINT * sizeof(float));
         memcpy(coriolisMatrix, robot_state->coriolis_matrix, NUMBER_OF_JOINT * NUMBER_OF_JOINT * sizeof(float));
         memcpy(jacobianMatrix, robot_state->jacobian_matrix, NUMBER_OF_JOINT * NUMBER_OF_JOINT * sizeof(float));
-        float(*result)[3] = Drfl_.get_current_rotm();
+        //actual_velocity
+        Eigen::Matrix<float, 6, 6> J_for_velocity;
+        for (int r = 0; r < 6; ++r) {
+            for (int c = 0; c < 6; ++c) {
+                J_for_velocity(r, c) = jacobianMatrix[r][c];
+            }
+        }
 
+        Eigen::Matrix<float, 6, 1> qdot_for_velocity;
+        for (int i = 0; i < 6; ++i) {
+            qdot_for_velocity(i) = actual_velocityj[i] * DEG2RAD;  // deg/s -> rad/s
+        }
+
+        Eigen::Matrix<float, 6, 1> twist_for_velocity =
+            J_for_velocity * qdot_for_velocity;
+
+        // log unit 맞추기: linear mm/s, angular deg/s
+        actual_velocity_jacobian[0] = twist_for_velocity(0) * 1000.0f;
+        actual_velocity_jacobian[1] = twist_for_velocity(1) * 1000.0f;
+        actual_velocity_jacobian[2] = twist_for_velocity(2) * 1000.0f;
+        actual_velocity_jacobian[3] = twist_for_velocity(3);
+        actual_velocity_jacobian[4] = twist_for_velocity(4);
+        actual_velocity_jacobian[5] = twist_for_velocity(5);
+
+        const bool use_jacobian_velocity =
+            is_dbic_mode ||
+            control_mode_ == "PBIC goal mode" ||
+            control_mode_ == "PBIC path mode";
+
+        if (use_jacobian_velocity) {
+            for (int i = 0; i < 6; ++i) {
+                actual_velocity[i] = actual_velocity_jacobian[i];
+            }
+        }
         /*new0317
         LPROBOT_POSE res = Drfl_.fkin(actual_positionj, COORDINATE_SYSTEM_WORLD);
         float gripper_torque[NUMBER_OF_JOINT] = {0,};
@@ -5792,12 +5863,12 @@ void ControlLoop::dataSaving() {
             actual_position[4] = act_rpy[1];
             actual_position[5] = act_rpy[2];
 
-            actual_velocity[0] = s_task.v(0) * 1000.0f;
-            actual_velocity[1] = s_task.v(1) * 1000.0f;
-            actual_velocity[2] = s_task.v(2) * 1000.0f;
-            actual_velocity[3] = s_task.w(0) * RAD2DEG;
-            actual_velocity[4] = s_task.w(1) * RAD2DEG;
-            actual_velocity[5] = s_task.w(2) * RAD2DEG;
+            // actual_velocity[0] = s_task.v(0) * 1000.0f;
+            // actual_velocity[1] = s_task.v(1) * 1000.0f;
+            // actual_velocity[2] = s_task.v(2) * 1000.0f;
+            // actual_velocity[3] = s_task.w(0) * RAD2DEG;
+            // actual_velocity[4] = s_task.w(1) * RAD2DEG;
+            // actual_velocity[5] = s_task.w(2) * RAD2DEG;
 
             for (int i = 0; i < 6; ++i) {
                 F_external_box[i] = s_task.F_env_on_robot(i);
@@ -5842,12 +5913,14 @@ void ControlLoop::dataSaving() {
         traj_position_6d[4] = traj_rpy[1];
         traj_position_6d[5] = traj_rpy[2];
 
-        for (int i=0; i<3; i++) {
-            for (int j=0; j<3; j++) {
+        float(*result)[3] = Drfl_.get_current_rotm();
+
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
                 rotationMatrix[i][j] = result[i][j];
-                sensorRotationMatrix(i, j) = result[i][j];
             }
         }
+
         // //new0317
         // if (is_dbic_mode) {
         //     Eigen::Matrix3f R_task = s_task.q.toRotationMatrix();
@@ -5867,13 +5940,7 @@ void ControlLoop::dataSaving() {
         const bool is_pbic_mode =
             (control_mode_ == "PBIC goal mode" ||
              control_mode_ == "PBIC path mode");
-        //new0506
-        const std::array<float, 6> aft_wrench_raw = sensor_data.getAFTWrench();
 
-        sensor_data.matchAFTWrench(sensorRotationMatrix);
-
-        const std::array<float, 6> aft_wrench_matched = sensor_data.getMatchedAFTWrench();             
-        //
         for (int i = 0; i < 6; ++i) {
             if (is_pbic_mode) {
                 impedance_position[i] = imp.pos_m(i);
@@ -5889,43 +5956,68 @@ void ControlLoop::dataSaving() {
                 position_error[i] = traj_position_6d[i] - actual_position[i];
             }
 
-            F_external[i] = -F.Fext[i];
+            F_external[i] = F.Fext[i];
+            F_external_joint[i] = F.Fext_joint[i];
             F_impedance[i] = F.Fimp[i];
             F_task_log[i] = F.F_task[i];      // 추가
-            F_DBIC[i] = F.F_DBIC[i];
+            F_Mass[i] = F.F_mass[i];
             F_coriolis[i] = F.F_coriolis[i];
             F_rest[i] = F.F_rest[i];
+            F_imp_val[i] = F.F_imp_val[i];
 
             gripper_torque[i] = trq_gg[i];
             trq_ext_auto[i] = trq_ext2[i];
             trq_ext_cal[i] = trq_raw[i] - trq_g[i];
-            //new0506
-            // sensor_FT[i] = sensor_data.AFT_wrench_[i];
-            // sensor_FT_matched[i] = sensor_data.AFT_wrench_matched[i];
-            sensor_FT[i] = aft_wrench_raw[i];
-            sensor_FT_matched[i] = aft_wrench_matched[i];   
-            //         
+            sensor_FT[i] = sensor_data.AFT_wrench_[i];
+            sensor_FT_matched[i] = sensor_data.AFT_wrench_matched[i];
 
-            error[i] = F.error[i];
-            error_dot[i] = F.error_dot[i];
+            error[i] = errors.e[i];
+            error_dot[i] = errors.de[i];
+            error_2dot[i] = errors.dde[i];
+            error_integral[i] = errors.e_integral[i];
         }
-        for (int i = 0; i < 3; ++i) {
-            ref_v_d_log[i] = g_ref_v_d_log[i].load(std::memory_order_relaxed);
-            s_v_log[i] = g_s_v_log[i].load(std::memory_order_relaxed);
-            ref_w_d_log[i] = g_ref_w_d_log[i].load(std::memory_order_relaxed);
-            s_w_log[i] = g_s_w_log[i].load(std::memory_order_relaxed);
+        for (int i = 0; i < 6; ++i) {
+            ref_task_pose_log[i] = g_ref_task_pose_log[i].load(std::memory_order_relaxed);
+            s_task_pose_log[i] = g_s_task_pose_log[i].load(std::memory_order_relaxed);
+
+            ref_task_vel_log[i] = g_ref_task_vel_log[i].load(std::memory_order_relaxed);
+            s_task_vel_log[i] = g_s_task_vel_log[i].load(std::memory_order_relaxed);
+
+            ref_task_acc_log[i] = g_ref_task_acc_log[i].load(std::memory_order_relaxed);
+            s_task_acc_log[i] = g_s_task_acc_log[i].load(std::memory_order_relaxed);
+            imp_task_pose_log[i] = g_imp_task_pose_log[i].load(std::memory_order_relaxed);
+            imp_task_vel_log[i] = g_imp_task_vel_log[i].load(std::memory_order_relaxed);
+            imp_task_acc_log[i] = g_imp_task_acc_log[i].load(std::memory_order_relaxed);
         }
 
-        time[0] += dt;//     
+
+        // time[0] += dt;//   
+
+        if (is_pbic_mode) {
+            auto now_for_log = std::chrono::high_resolution_clock::now();
+            time[0] = std::chrono::duration<float>(now_for_log - log_start).count();
+        } else {
+            time[0] += dt;
+        }
 
         //new0324
-        logData("ref_v_d.txt", ref_v_d_log, 3);
-        logData("s_v.txt", s_v_log, 3);
-        logData("ref_w_d.txt", ref_w_d_log, 3);
-        logData("s_w.txt", s_w_log, 3);
+        logData("imp_task_pose.txt", imp_task_pose_log, 6);
+        logData("imp_task_vel.txt", imp_task_vel_log, 6);
+        logData("imp_task_acc.txt", imp_task_acc_log, 6);
+        logData("ref_task_pose.txt", ref_task_pose_log, 6);
+        logData("s_task_pose.txt", s_task_pose_log, 6);
+        logData("ref_task_vel.txt", ref_task_vel_log, 6);
+        logData("s_task_vel.txt", s_task_vel_log, 6);
+        logData("ref_task_acc.txt", ref_task_acc_log, 6);
+        logData("s_task_acc.txt", s_task_acc_log, 6);
 
+        logData("F_imp_val.txt", F_imp_val, NUMBER_OF_JOINT);
+        logData("force_external_joint.txt", F_external_joint, NUMBER_OF_JOINT);
+        logData("actual_velocity_jacobian.txt", actual_velocity_jacobian, NUMBER_OF_JOINT); 
         logData("error.txt", error, NUMBER_OF_TASK);
-        logData("error_dot.txt", error_dot, NUM_TASK);             
+        logData("error_dot.txt", error_dot, NUM_TASK);    
+        logData("error_2dot.txt", error_2dot, NUMBER_OF_TASK);   
+        logData("error_integral.txt", error_integral, NUMBER_OF_TASK);      
         logData("actual_flange_position.txt", actual_flange_position, NUMBER_OF_JOINT);
         logData("actual_tcp_position.txt", actual_tcp_position, NUM_TASK);                
         logData("actual_motor_torque.txt", actual_motor_torque, NUMBER_OF_JOINT);
@@ -5954,7 +6046,7 @@ void ControlLoop::dataSaving() {
         logData("joint_command.txt", position_command, NUMBER_OF_JOINT);
         logData("force_external.txt",F_external, NUMBER_OF_JOINT);
         logData("force_task.txt",F_task_log, NUMBER_OF_JOINT);   // 추가
-        logData("force_dbic.txt",F_DBIC, NUMBER_OF_JOINT);
+        logData("force_mass.txt",F_Mass, NUMBER_OF_JOINT);
         logData("force_rest.txt",F_rest, NUMBER_OF_JOINT);
         logData("force_coriolis.txt",F_coriolis, NUMBER_OF_JOINT);
         logData("actual_joint_torque.txt",trq_act, NUMBER_OF_JOINT);
@@ -6076,11 +6168,21 @@ void ControlLoop::dataSaving() {
         
         auto current = std::chrono::high_resolution_clock::now();
         Duration save_time(std::chrono::duration_cast<std::chrono::milliseconds>(current - start));
-    
+        //로그기록시간 측정
+        float data_save_loop_time[1] = {
+            static_cast<float>(save_time.toMSec())
+        };
+        logData("data_saving_loop_times.txt", data_save_loop_time, 1);
+
         if (control_loop_time > save_time) {
             std::this_thread::sleep_for(control_loop_time() - save_time());
         }
         start = std::chrono::high_resolution_clock::now();
+        // //중복인거 같아서 주석처리
+        // if (control_loop_time > save_time) {
+        //     std::this_thread::sleep_for(control_loop_time() - save_time());
+        // }
+        // start = std::chrono::high_resolution_clock::now();
     }
 }
 
