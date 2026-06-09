@@ -396,6 +396,7 @@ namespace SKKU
     extern std::atomic<float> g_imp_task_pose_log[6];
     extern std::atomic<float> g_imp_task_vel_log[6];
     extern std::atomic<float> g_imp_task_acc_log[6]; 
+    extern std::atomic<float> g_qdot_des_log[6];
     bool PBIC::isFileInitialized_1 = false;
     bool PBIC::isFileInitialized_2 = false;
 
@@ -554,11 +555,12 @@ namespace SKKU
 
         M_gains = {imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000};
         // K_gains = {3*imp_k, 3*imp_k, imp_k, imp_k, imp_k, imp_k};
-        K_gains = {3*imp_k, 3*imp_k, 2*imp_k, 100.0f * imp_k, 100.0f * imp_k, 100.0f * imp_k};
+        K_gains = {1.0f*imp_k, 1.0f*imp_k, 1.0f*imp_k, 75.0f * imp_k, 75.0f * imp_k, 75.0f * imp_k};
         for (int i = 0; i < 6; ++i)
         {
             // B_gains[i] = 2 * sqrt(K_gains[i] * M_gains[i]); // 2 critical dmaped
-            B_gains[i] = 4 * sqrt(K_gains[i] * M_gains[i]); // 4 Overdmaped
+            B_gains[i] = 1.4 * sqrt(K_gains[i] * M_gains[i]); // 4 Overdmaped
+            
             // B_gains[i] = 0.5 * sqrt(K_gains[i] * M_gains[i]); // 2 Underdmaped
         }
     }
@@ -979,7 +981,7 @@ namespace SKKU
 
         // 축별 LPF 계수 (작을수록 더 부드러움)
         Eigen::Matrix<float, 6, 1> edot_alpha;
-        edot_alpha << 1.0f, 1.0f, 1.0f,
+        edot_alpha << 0.2f, 0.2f, 0.2f,
                     1.0f, 1.0f, 1.0f;
 
         // edot 변화율 제한 (단위: linear = mm/s^2, angular = rad/s^2)
@@ -1034,7 +1036,7 @@ namespace SKKU
         xdd_actual_raw.tail<3>() = s.alpha;
 
         Eigen::Matrix<float, 6, 1> xdd_actual_alpha;
-        xdd_actual_alpha << 0.10f, 0.10f, 0.10f,
+        xdd_actual_alpha << 0.10f, 0.10f, 0.05f,
                             0.10f, 0.10f, 0.10f;
 
         if (!has_xdd_actual_lpf_dbic_) {
@@ -1329,12 +1331,29 @@ namespace SKKU
         Eigen::Matrix<float, 6, 6> J = mapMat6(robot_state->jacobian_matrix);
         Eigen::Matrix<float, 6, 1> tool_weight_tau = J.transpose() * (-F_offset);
 
-        static std::array<float, 6> prev_desired_q_d = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-        static bool prev_desired_q_d_initialized = false;
+        Eigen::Matrix<float, 6, 1> xdot_imp = Eigen::Matrix<float, 6, 1>::Zero();
 
-        if (!prev_desired_q_d_initialized || count == 0) {
-            prev_desired_q_d = desired.q_d;
-            prev_desired_q_d_initialized = true;
+        // imp.v_m은 PBIC에서 mm/s
+        xdot_imp(0) = imp.v_m(0) * 1e-3f;
+        xdot_imp(1) = imp.v_m(1) * 1e-3f;
+        xdot_imp(2) = imp.v_m(2) * 1e-3f;
+
+        // imp.w_m은 rad/s
+        xdot_imp(3) = imp.w_m(0);
+        xdot_imp(4) = imp.w_m(1);
+        xdot_imp(5) = imp.w_m(2);
+
+        Eigen::Matrix<float, 6, 6> J_inv = dampedPseudoInverse(J, 5e-3f);
+
+        // J는 qdot [rad/s] -> twist [m/s, rad/s]
+        // 따라서 qdot_des_rad는 rad/s
+        Eigen::Matrix<float, 6, 1> qdot_des_rad = J_inv * xdot_imp;
+
+        // actual_velocityj는 deg/s라서 맞춰줌
+        Eigen::Matrix<float, 6, 1> qdot_des_deg = qdot_des_rad * RAD2DEG;
+
+        for (int i = 0; i < 6; ++i) {
+            g_qdot_des_log[i].store(qdot_des_deg(i), std::memory_order_relaxed);
         }
 
         for (int i = 0; i < 6; ++i)
@@ -1342,10 +1361,10 @@ namespace SKKU
             err[i] = desired.q_d[i] - joint[i];
 
             // joint6 초기 branch jump 완화용 기존 로직 유지
-            if (i == 5 && count <= 500) {
-                float scaling_factor = static_cast<float>(count) / 500.0f;
-                err[5] *= scaling_factor;
-            }
+            // if (i == 5 && count <= 500) {
+            //     float scaling_factor = static_cast<float>(count) / 500.0f;
+            //     err[5] *= scaling_factor;
+            // }
 
             // angle wrap
             if (err[i] >= 350.0f) {
@@ -1354,20 +1373,30 @@ namespace SKKU
                 err[i] += 360.0f;
             }
 
-            float q_des_delta = desired.q_d[i] - prev_desired_q_d[i];
-            while (q_des_delta > 180.0f) q_des_delta -= 360.0f;
-            while (q_des_delta < -180.0f) q_des_delta += 360.0f;
-
-            const float qdot_des = q_des_delta / dt;
+            const float qdot_des = qdot_des_deg(i);
             float derr_raw = qdot_des - actual_velocityj[i];
 
-            if (i == 5 && count <= 500) {
-                float scaling_factor = static_cast<float>(count) / 500.0f;
-                derr_raw *= scaling_factor;
-            }
+            // if (i == 5 && count <= 500) {
+            //     float scaling_factor = static_cast<float>(count) / 500.0f;
+            //     derr_raw *= scaling_factor;
+            // }
 
             // derivative LPF
-            derr[i] = 0.1f * derr_raw + 0.9f * derrPrev(i);
+            // derivative LPF
+            const std::array<float, 6> derr_alpha_joint = {
+                0.1f,  // J1
+                0.1f,  // J2
+                0.1f,  // J3
+                0.1f,  // J4
+                0.1f,  // J5
+                0.1f   // J6
+            };
+
+            float derr_alpha = derr_alpha_joint[i];
+
+            derr[i] = derr_alpha * derr_raw + (1.0f - derr_alpha) * derrPrev(i);
+
+            // derr[i] = 0.2f * derr_raw + 0.8f * derrPrev(i);
 
             // integral
             err_integral[i] = error.e_integral[i] + err[i] * dt;
@@ -1384,6 +1413,49 @@ namespace SKKU
                 + trq_gravity[i]
                 + tool_weight_tau(i); 
 
+            //test-deadband
+
+            // J5 directional breakaway minimum torque compensation
+            // float tau_pbic = torque.tau_d[i];
+
+            // if (i == 4) {  // J5
+            //     static float tau_comp_prev = 0.0f;
+
+            //     if (count == 0) {
+            //         tau_comp_prev = 0.0f;
+            //     }
+
+            //     const float tau_dead = 5.5f;          // 추정 deadband [Nm]
+            //     const float tau_eps = 0.05f;          // 아주 작은 torque는 무시
+            //     const float vel_release = 1.5f;       // 움직이면 보상 줄임 [deg/s]
+            //     const float comp_rate = 150.0f;       // Nm/s
+
+            //     float direction = 0.0f;
+
+            //     if (std::fabs(tau_pbic) > tau_eps) {
+            //         direction = (tau_pbic > 0.0f) ? 1.0f : -1.0f;
+            //     } else if (std::fabs(qdot_des) > 0.02f) {
+            //         direction = (qdot_des > 0.0f) ? 1.0f : -1.0f;
+            //     }
+
+            //     float tau_comp_cmd = 0.0f;
+
+            //     if (direction != 0.0f &&
+            //         std::fabs(actual_velocityj[i]) < vel_release) {
+            //         tau_comp_cmd = direction * tau_dead;
+            //     }
+
+            //     const float max_step = comp_rate * dt;
+            //     float delta = tau_comp_cmd - tau_comp_prev;
+
+            //     if (delta > max_step) delta = max_step;
+            //     if (delta < -max_step) delta = -max_step;
+
+            //     tau_comp_prev += delta;
+
+            //     torque.tau_d[i] = tau_pbic + tau_comp_prev;
+            // }
+
             // torque saturation
             if (torque.tau_d[i] > torque_limits[i]) {
                 torque.tau_d[i] = torque_limits[i];
@@ -1391,9 +1463,6 @@ namespace SKKU
                 torque.tau_d[i] = -torque_limits[i];
             }
 
-            // 다음 스텝 derivative filter용 저장
-            derrPrev(i) = derr[i];
-            prev_desired_q_d[i] = desired.q_d[i];
         }
 
         error.e = err;

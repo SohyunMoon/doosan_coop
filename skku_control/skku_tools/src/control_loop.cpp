@@ -3194,6 +3194,7 @@ std::atomic<float> g_s_task_acc_log[6];
 std::atomic<float> g_imp_task_pose_log[6];
 std::atomic<float> g_imp_task_vel_log[6];
 std::atomic<float> g_imp_task_acc_log[6];
+std::atomic<float> g_qdot_des_log[6];
 namespace {
     bool g_fill_euler_dummy_first = true;
     float g_fill_euler_dummy_prev_rpy[3] = {0.f, 0.f, 0.f};
@@ -4359,8 +4360,10 @@ void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& m
         // PBIC는 계산량이 커서 count 기반 nominal time을 쓰면 wall-clock이 늘어난다.
         // 그래서 goal trajectory sampler만큼은 실제 elapsed time 기준으로 쓴다.
         auto now_for_ref = std::chrono::high_resolution_clock::now();
+
         g_pbic_goal_elapsed_sec =
             std::chrono::duration<double>(now_for_ref - start_time).count();
+
 
         // --------------------------------------------------------------
         // PBIC motion:
@@ -5608,6 +5611,7 @@ void ControlLoop::dataSaving() {
     float actual_velocity[NUMBER_OF_JOINT] = {0,};
     float trq_raw[NUMBER_OF_JOINT] = {0,};
     float trq_act[NUMBER_OF_JOINT] = {0,};
+    float qdot_des_log[6] = {0,};
     float ref_task_pose_log[6] = {0,};
     float s_task_pose_log[6] = {0,};
 
@@ -5988,6 +5992,8 @@ void ControlLoop::dataSaving() {
             imp_task_pose_log[i] = g_imp_task_pose_log[i].load(std::memory_order_relaxed);
             imp_task_vel_log[i] = g_imp_task_vel_log[i].load(std::memory_order_relaxed);
             imp_task_acc_log[i] = g_imp_task_acc_log[i].load(std::memory_order_relaxed);
+            qdot_des_log[i] = g_qdot_des_log[i].load(std::memory_order_relaxed);
+            
         }
 
 
@@ -6001,6 +6007,7 @@ void ControlLoop::dataSaving() {
         }
 
         //new0324
+        logData("qdot_des.txt", qdot_des_log, 6);
         logData("imp_task_pose.txt", imp_task_pose_log, 6);
         logData("imp_task_vel.txt", imp_task_vel_log, 6);
         logData("imp_task_acc.txt", imp_task_acc_log, 6);

@@ -455,7 +455,6 @@ class ControlLoop : protected PBIC{
         bool truncate = false;
         TrajectoryGen trajectory_gen_;
         std::array<float, 6> torque_limit = {519.0, 519.0, 244.5, 75.0, 75.0, 75.0};
-        Impedance imp;
         float previous_velocityj[NUMBER_OF_JOINT] = {0,};
         float old_p[NUMBER_OF_JOINT] = {0,};
         float old_v[NUMBER_OF_JOINT] = {0,};
