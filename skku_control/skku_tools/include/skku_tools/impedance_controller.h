@@ -197,13 +197,19 @@ namespace SKKU {
                         Eigen::Matrix<float, 6, 1>& x,
                         Eigen::Matrix<float, 6, 1>& v,
                         Eigen::Matrix<float, 6, 1> imp_C);
-        
+        //0609
+        bool preselectPBICInitialSolution(
+            const LPRT_OUTPUT_DATA_LIST robot_state,
+            int& sol_space);
+        //
         Eigen::Matrix<float, 6, 1> f(Eigen::Matrix<float, 6, 1> x, Eigen::Matrix<float, 6, 1> v, Eigen::Matrix<float, 6, 1> imp_C);
         
         void start_Motion(LPRT_OUTPUT_DATA_LIST& robot_state, Prev& prev, Impedance& impedance);
         void resetDBICControllerState();
 
+
         Forces F;
+        float pbic_ik_jump_log = 0.0f;
     
         Eigen::Matrix<float, 6, 1> F_estimate(const Eigen::Matrix<float, 1, 6>& input_data_1, const Eigen::Matrix<float, 1, 6>& input_data_2, const Eigen::Matrix<float, 1, 6>& input_data_3);
         void appendMatrixToFile_1(const Eigen::Matrix<float, 6, 1>& matrix, const std::string& filename);
@@ -309,6 +315,9 @@ namespace SKKU {
 
         Eigen::Matrix<float, 6, 1> qddot_filt_dbic_ =
             Eigen::Matrix<float, 6, 1>::Zero();
+        //0609
+        bool pbic_initial_ik_preselected_ = false;
+        //
         // -------------------------------------------------------
 
         float imp_m;

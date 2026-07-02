@@ -505,6 +505,9 @@ private:
 
     void runDBICGoal(const moveit_msgs::CartesianTrajectory& msg);
     void runDBICPath(const moveit_msgs::CartesianTrajectory& msg);
+    //0609
+    bool pbic_imp_initialized_ = false;
+    //
 };
 
 class PositionControlLoop : public ControlLoop {

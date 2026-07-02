@@ -4296,8 +4296,10 @@ void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& m
 
     fail = 0;
     control_mode_ = "PBIC goal mode";
-    operator_call_count_++;
-    sol_space = 0;
+    // operator_call_count_++;
+    // sol_space = 0;
+    const bool requested_continue_pbic = pbic_imp_initialized_;
+
     count = 0;
     count_motion = 0;
     errors = Errors();
@@ -4316,26 +4318,88 @@ void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& m
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
     LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
+    //0609
+    // // DBIC trajectory sampler / quaternion continuity reset
+    // resetDBICControllerState();
+    // resetFillEulerDummyForIKState();
+    // resetPbicGoalSpinMotionState();
 
-    // DBIC trajectory sampler / quaternion continuity reset
-    resetDBICControllerState();
-    resetFillEulerDummyForIKState();
+    // // ------------------------------------------------------------------
+    // // 1) DBIC와 동일한 nominal goal trajectory 생성 방식 사용
+    // //    current task pose -> goal msg
+    // // ------------------------------------------------------------------
+    // TaskState current_task_state =
+    //     getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
+
+    // trajectory_gen_.initDBICGoal(current_task_state.p, current_task_state.q, msg);
+
+    // // ------------------------------------------------------------------
+    // // 2) PBIC outer impedance model 초기화
+    // //    MotionGenerator()가 imp.pos_m / vel_m / acc_m 을 업데이트한다.
+    // // ------------------------------------------------------------------
+    // start_Motion(robot_state, prev, imp);
+
     resetPbicGoalSpinMotionState();
 
-    // ------------------------------------------------------------------
-    // 1) DBIC와 동일한 nominal goal trajectory 생성 방식 사용
-    //    current task pose -> goal msg
-    // ------------------------------------------------------------------
     TaskState current_task_state =
         getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
 
-    trajectory_gen_.initDBICGoal(current_task_state.p, current_task_state.q, msg);
+    bool continue_pbic = requested_continue_pbic;
 
-    // ------------------------------------------------------------------
-    // 2) PBIC outer impedance model 초기화
-    //    MotionGenerator()가 imp.pos_m / vel_m / acc_m 을 업데이트한다.
-    // ------------------------------------------------------------------
-    start_Motion(robot_state, prev, imp);
+    if (continue_pbic) {
+        float gap_mm = (imp.p_m - current_task_state.p * 1000.0f).norm();
+
+        float qdot_abs = std::fabs(imp.q_m.dot(current_task_state.q));
+        qdot_abs = std::min(1.0f, std::max(0.0f, qdot_abs));
+        float gap_rad = 2.0f * std::acos(qdot_abs);
+
+        if (gap_mm > 10.0f || gap_rad > 0.10f) {
+            continue_pbic = false;
+        }
+    }
+
+    Eigen::Vector3f pbic_start_p_m;
+    Eigen::Quaternionf pbic_start_q;
+
+    if (!continue_pbic) {
+        count_motion = 0;
+
+        resetDBICControllerState();
+        resetFillEulerDummyForIKState();
+
+        current_task_state =
+            getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
+
+        start_Motion(robot_state, prev, imp);
+
+        std::memcpy(previous_joint_command,
+                    robot_state->actual_joint_position,
+                    sizeof(float) * 6);
+
+        sol_space = static_cast<int>(robot_state->solution_space);
+
+        pbic_start_p_m = current_task_state.p;
+        pbic_start_q = current_task_state.q;
+    } else {
+        // 이전 PBIC 명령에서 이어가기: actual 위치로 imp를 리셋하지 않음
+        pbic_start_p_m = imp.p_m * 1e-3f;  // mm -> m
+        pbic_start_q = imp.q_m;
+    }
+
+    trajectory_gen_.initDBICGoal(pbic_start_p_m, pbic_start_q, msg);
+    pbic_imp_initialized_ = true;
+
+    if (!isDirectoryCreated || dataDirectory.empty()) {
+        createNewDataDirectory();
+        isDirectoryCreated = true;
+    }
+    // 중요: 10초 start_time 잡기 전에 IK full scan 완료
+    if (!preselectPBICInitialSolution(robot_state, sol_space)) {
+        ROS_ERROR("PBIC initial IK preselect failed.");
+        fail = 2;
+        return;
+    }
+    //
 
     Duration control_loop_time = Duration(loop_time_);
     const float st = static_cast<float>(loop_time_) / 1000.0f;
@@ -5603,6 +5667,7 @@ void ControlLoop::gaindataSavingThread() {
 }
 
 void ControlLoop::dataSaving() {
+    float pbic_ik_jump[1] = {0.0f};
     float imp_task_pose_log[6] = {0,};
     float imp_task_vel_log[6] = {0,};
     float imp_task_acc_log[6] = {0,};
@@ -5671,10 +5736,6 @@ void ControlLoop::dataSaving() {
     float raw_actual_tcp_position[NUMBER_OF_JOINT] = {0,};
 
     float actual_flange_quat_assuming_zyz[4] = {0,};
-    float actual_flange_quat_assuming_xyz[4] = {0,};
-
-    float actual_flange_quat_assuming_zyz2[4] = {0,};
-    float actual_flange_quat_assuming_zyx[4] = {0,};
 
     float actual_motor_torque[NUMBER_OF_JOINT] = {0,};
     float target_motor_torque[NUMBER_OF_JOINT] = {0,};
@@ -5893,10 +5954,6 @@ void ControlLoop::dataSaving() {
         //
         //new0324
         pose6ToQuatAssumingZYZ(raw_actual_flange_position, actual_flange_quat_assuming_zyz);
-        pose6ToQuatAssumingXYZ(raw_actual_flange_position, actual_flange_quat_assuming_xyz);
-
-        pose6ToQuatAssumingZYZ2(raw_actual_flange_position, actual_flange_quat_assuming_zyz2);
-        pose6ToQuatAssumingZYX(raw_actual_flange_position, actual_flange_quat_assuming_zyx);
         //
         convertToArray(trajectory.pos_d, traj_position);
         convertToArray(trajectory.vel_d, traj_velocity);
@@ -6007,6 +6064,8 @@ void ControlLoop::dataSaving() {
         }
 
         //new0324
+        pbic_ik_jump[0] = pbic_ik_jump_log;
+        logData("pbic_ik_jump.txt", pbic_ik_jump, 1);
         logData("qdot_des.txt", qdot_des_log, 6);
         logData("imp_task_pose.txt", imp_task_pose_log, 6);
         logData("imp_task_vel.txt", imp_task_vel_log, 6);
@@ -6030,9 +6089,6 @@ void ControlLoop::dataSaving() {
         logData("actual_motor_torque.txt", actual_motor_torque, NUMBER_OF_JOINT);
         logData("target_motor_torque.txt", target_motor_torque, NUMBER_OF_JOINT);
         logData("actual_flange_quaternion_assuming_ZYZ.txt", actual_flange_quat_assuming_zyz, 4);
-        logData("actual_flange_quaternion_assuming_XYZ.txt", actual_flange_quat_assuming_xyz, 4);
-        logData("actual_flange_quaternion_assuming_ZYZ2.txt", actual_flange_quat_assuming_zyz2, 4);
-        logData("actual_flange_quaternion_assuming_ZYX.txt", actual_flange_quat_assuming_zyx, 4);
         logData("Raw_external_force.txt", Raw_external_force, NUMBER_OF_TASK);
         //
         logData("filtered_acceleration.txt", filtered_accelerationj, NUMBER_OF_JOINT);

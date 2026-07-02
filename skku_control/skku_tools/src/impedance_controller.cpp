@@ -701,6 +701,83 @@ namespace SKKU
                                 robot_state->actual_flange_position[4],
                                 robot_state->actual_flange_position[5]);
     }
+    bool PBIC::preselectPBICInitialSolution(
+        const LPRT_OUTPUT_DATA_LIST robot_state,
+        int& sol_space)
+    {
+        float x_d[6] = {
+            imp.p_m(0), imp.p_m(1), imp.p_m(2),
+            imp.pos_m(3), imp.pos_m(4), imp.pos_m(5)
+        };
+
+        float current_joint[6] = {0,};
+        std::memcpy(current_joint, robot_state->actual_joint_position, sizeof(float) * 6);
+
+        auto wrapDeltaDeg = [](float delta) {
+            while (delta > 180.0f) delta -= 360.0f;
+            while (delta < -180.0f) delta += 360.0f;
+            return delta;
+        };
+
+        bool found = false;
+        int best_sol = sol_space;
+        float best_des[6] = {0,};
+        float best_cost = 1.0e30f;
+
+        for (int cand_sol = 0; cand_sol < 8; ++cand_sol) {
+            LPINVERSE_KINEMATIC_RESPONSE cand =
+                Drfl_.ikin(x_d, cand_sol, COORDINATE_SYSTEM_WORLD, 1);
+
+            if (cand == nullptr || cand->_iStatus != 0) {
+                continue;
+            }
+
+            float cand_cost = 0.0f;
+            bool valid = true;
+
+            for (int i = 0; i < 6; ++i) {
+                float q = cand->_fTargetPos[i];
+                if (!std::isfinite(q)) {
+                    valid = false;
+                    break;
+                }
+
+                float d_prev = wrapDeltaDeg(q - previous_joint_command[i]);
+                float d_curr = wrapDeltaDeg(q - current_joint[i]);
+
+                cand_cost += d_prev * d_prev + 0.05f * d_curr * d_curr;
+            }
+
+            if (!valid) continue;
+
+            if (cand_cost < best_cost) {
+                found = true;
+                best_cost = cand_cost;
+                best_sol = cand_sol;
+
+                for (int i = 0; i < 6; ++i) {
+                    best_des[i] = cand->_fTargetPos[i];
+                }
+            }
+        }
+
+        if (!found) {
+            return false;
+        }
+
+        sol_space = best_sol;
+
+        for (int i = 0; i < 6; ++i) {
+            previous_joint_command[i] = best_des[i];
+        }
+
+        pbic_initial_ik_preselected_ = true;
+
+        std::cout << "[PBIC IK] preselected sol_space = "
+                << sol_space << std::endl;
+
+        return true;
+    }
     //
 
     // void PBIC::resetDBICControllerState()
@@ -1198,40 +1275,40 @@ namespace SKKU
 
         // 축별 절대 제한값 [Fx,Fy,Fz,Mx,My,Mz]
         // 시작은 보수적으로 두고 나중에 조정
-        Eigen::Matrix<float, 6, 1> fext_abs_limit;
-        fext_abs_limit << 400.0f, 400.0f, 200.0f, 50.0f, 50.0f, 50.0f;
+        // Eigen::Matrix<float, 6, 1> fext_abs_limit;
+        // fext_abs_limit << 400.0f, 400.0f, 200.0f, 50.0f, 50.0f, 50.0f;
 
-        // 변화율 제한값 [N/s, Nm/s]
-        const float force_slew_rate  = 2000.0f;  // translational
-        const float torque_slew_rate = 200.0f;   // rotational
+        // // 변화율 제한값 [N/s, Nm/s]
+        // const float force_slew_rate  = 2000.0f;  // translational
+        // const float torque_slew_rate = 200.0f;   // rotational
 
-        Eigen::Matrix<float, 6, 1> fext_delta_limit;
-        fext_delta_limit << force_slew_rate * dt,
-                            force_slew_rate * dt,
-                            force_slew_rate * dt,
-                            torque_slew_rate * dt,
-                            torque_slew_rate * dt,
-                            torque_slew_rate * dt;
+        // Eigen::Matrix<float, 6, 1> fext_delta_limit;
+        // fext_delta_limit << force_slew_rate * dt,
+        //                     force_slew_rate * dt,
+        //                     force_slew_rate * dt,
+        //                     torque_slew_rate * dt,
+        //                     torque_slew_rate * dt,
+        //                     torque_slew_rate * dt;
 
-        if (!fext_filter_init) {
-            Fext_prev = Fext;
-            Fext_filt = Fext;
-            fext_filter_init = true;
-        }
+        // if (!fext_filter_init) {
+        //     Fext_prev = Fext;
+        //     Fext_filt = Fext;
+        //     fext_filter_init = true;
+        // }
 
-        // 1) 프레임 간 급격한 점프 제한
-        for (int i = 0; i < 6; ++i) {
-            float delta = Fext(i) - Fext_prev(i);
+        // // 1) 프레임 간 급격한 점프 제한
+        // for (int i = 0; i < 6; ++i) {
+        //     float delta = Fext(i) - Fext_prev(i);
 
-            if (delta >  fext_delta_limit(i)) delta =  fext_delta_limit(i);
-            if (delta < -fext_delta_limit(i)) delta = -fext_delta_limit(i);
+        //     if (delta >  fext_delta_limit(i)) delta =  fext_delta_limit(i);
+        //     if (delta < -fext_delta_limit(i)) delta = -fext_delta_limit(i);
 
-            Fext(i) = Fext_prev(i) + delta;
+        //     Fext(i) = Fext_prev(i) + delta;
 
-            // 2) 절대 크기 제한
-            if (Fext(i) >  fext_abs_limit(i)) Fext(i) =  fext_abs_limit(i);
-            if (Fext(i) < -fext_abs_limit(i)) Fext(i) = -fext_abs_limit(i);
-        }
+        //     // 2) 절대 크기 제한
+        //     if (Fext(i) >  fext_abs_limit(i)) Fext(i) =  fext_abs_limit(i);
+        //     if (Fext(i) < -fext_abs_limit(i)) Fext(i) = -fext_abs_limit(i);
+        // }
 
         // 3) 저역통과필터
         const float alpha_fext = 1.00f; // 작을수록 더 부드러움
@@ -2050,6 +2127,7 @@ namespace SKKU
 
         bool is_singular = false;
         std::array<float, 6> des = {0, };
+        pbic_ik_jump_log = 0.0f;
 
         Eigen::Map<const Eigen::Matrix<float, 6, 1>> tau_ext(robot_state->external_joint_torque);
         Eigen::Map<Eigen::Matrix<float, 6, 1>> F_extPrev(prev.F_extPrev.data());
@@ -2147,32 +2225,17 @@ namespace SKKU
             Fft_raw(i) = ft_matched[i];
         }
 
-        static int ft_valid_count = 0;
-        static bool ft_ready = false;
-
-        const bool ft_sensor_valid = Fft_raw.cwiseAbs().maxCoeff() > 1.0e-6f;
-        if (ft_sensor_valid) {
-            ++ft_valid_count;
-        } else {
-            ft_valid_count = 0;
-            ft_ready = false;
-        }
-
-        if (ft_valid_count >= 5) {
-            ft_ready = true;
-        }
-
         Eigen::Matrix<float, 6, 1> Fext_raw =
             Eigen::Matrix<float, 6, 1>::Zero();
 
-        if (ft_ready) {
-            Eigen::Matrix<float, 6, 1> Fext_extra_offset;
-            Fext_extra_offset << 0.0f, 0.1f, -0.95f, 0.0f, 0.0f, 0.0f;
-            Fext_raw = Fft_raw - Fext_extra_offset;
-        }
+        Eigen::Matrix<float, 6, 1> Fext_extra_offset;
+        // Fext_extra_offset << 0.0f, 0.1f, -0.95f, 0.0f, 0.0f, 0.0f;
+        Fext_extra_offset << 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f;
+        Fext_raw = Fft_raw - Fext_extra_offset;
+
         F_ext = Fext_raw;
 
-//FT센서사용으로 비활성화
+        //FT센서사용으로 비활성화
         Eigen::Matrix<float, 6, 6> J_inv = dampedPseudoInverse(s.J, 5e-3f);
 
         Eigen::Matrix<float, 6, 1> Fext_joint_raw =
@@ -2181,6 +2244,12 @@ namespace SKKU
         Eigen::Matrix<float, 6, 1> Fext_joint_log =
             Fext_joint_raw - F_offset;
         
+
+        //joint torque sensor 를 입력값으로 쓰고싶을떄
+
+        // F_ext = Fext_joint_log;
+
+
         // Eigen::Matrix<float, 6, 1> Fext_raw = 1.0f * J_inv.transpose() * tau_ext;
 
         // Eigen::Matrix<float, 6, 1> Fext = Fext_raw;
@@ -2226,22 +2295,42 @@ namespace SKKU
         // ------------------------------------------------------------
         // motion start initialization
         // ------------------------------------------------------------
-        if (count_motion == 0) {
-            memcpy(previous_joint_command,
-                robot_state->actual_joint_position,
-                sizeof(float) * 6);
-            //해 전구간 탐색
-            sol_space = static_cast<int>(robot_state->solution_space);
-            //해 솔루션 2고정
-            // sol_space = 2;
-            std::cout << "[PBIC IK] initial robot_state solution_space = "
-          << sol_space << std::endl;
+//0609
+        // if (count_motion == 0) {
+        //     memcpy(previous_joint_command,
+        //         robot_state->actual_joint_position,
+        //         sizeof(float) * 6);
+        //     //해 전구간 탐색
+        //     sol_space = static_cast<int>(robot_state->solution_space);
+        //     //해 솔루션 2고정
+        //     // sol_space = 2;
+        //     std::cout << "[PBIC IK] initial robot_state solution_space = "
+        //   << sol_space << std::endl;
 
-            prev_zyz_deg[0] = robot_state->actual_flange_position[3];
-            prev_zyz_deg[1] = robot_state->actual_flange_position[4];
-            prev_zyz_deg[2] = robot_state->actual_flange_position[5];
+        //     prev_zyz_deg[0] = robot_state->actual_flange_position[3];
+        //     prev_zyz_deg[1] = robot_state->actual_flange_position[4];
+        //     prev_zyz_deg[2] = robot_state->actual_flange_position[5];
+        //     zyz_ref_initialized = true;
+        // }
+        if (count_motion == 0) {
+            if (!pbic_initial_ik_preselected_) {
+                std::memcpy(previous_joint_command,
+                            robot_state->actual_joint_position,
+                            sizeof(float) * 6);
+
+                sol_space = static_cast<int>(robot_state->solution_space);
+
+                std::cout << "[PBIC IK] initial robot_state solution_space = "
+                        << sol_space << std::endl;
+            }
+
+            // actual이 아니라 현재 imp 기준으로 ZYZ unwrap 시작
+            prev_zyz_deg[0] = imp.pos_m(3);
+            prev_zyz_deg[1] = imp.pos_m(4);
+            prev_zyz_deg[2] = imp.pos_m(5);
             zyz_ref_initialized = true;
         }
+        //
 
         // ------------------------------------------------------------
         // Quaternion-based PBIC outer impedance model
@@ -2424,20 +2513,38 @@ namespace SKKU
         float best_cost = 1.0e30f;
         int best_sol_space = sol_space;
         //해 전구간 탐색
-        bool need_full_scan = (count_motion == 0);
+//0609
+        // bool need_full_scan = (count_motion == 0);
+//
         // 해 2고정
         // bool need_full_scan = false;
+        bool need_full_scan = (count_motion == 0) && !pbic_initial_ik_preselected_;
 
         if (!need_full_scan) {
             float cand_des[NUMBER_OF_JOINT] = {0,};
             float cand_cost = 0.0f;
             float cand_max_delta_deg = 0.0f;
+//0609
+            // if (evaluateIkCandidate(sol_space,
+            //                         cand_des,
+            //                         cand_cost,
+            //                         cand_max_delta_deg) &&
+            //     cand_max_delta_deg <= kFastAcceptMaxDeltaDeg) {
+            //     found_solution = true;
+            //     best_cost = cand_cost;
+            //     best_sol_space = sol_space;
 
+            //     for (int i = 0; i < 6; ++i) {
+            //         best_des[i] = cand_des[i];
+            //     }
+            // } else {
+            //     need_full_scan = true;
+            // }
+    
             if (evaluateIkCandidate(sol_space,
                                     cand_des,
                                     cand_cost,
-                                    cand_max_delta_deg) &&
-                cand_max_delta_deg <= kFastAcceptMaxDeltaDeg) {
+                                    cand_max_delta_deg)) {
                 found_solution = true;
                 best_cost = cand_cost;
                 best_sol_space = sol_space;
@@ -2445,9 +2552,19 @@ namespace SKKU
                 for (int i = 0; i < 6; ++i) {
                     best_des[i] = cand_des[i];
                 }
+
+                if (cand_max_delta_deg > kFastAcceptMaxDeltaDeg) {
+                    ROS_WARN_THROTTLE(
+                        1.0,
+                        "PBIC IK current sol_space delta %.3f deg exceeds fast threshold %.3f deg.",
+                        cand_max_delta_deg,
+                        kFastAcceptMaxDeltaDeg
+                    );
+                }
             } else {
-                need_full_scan = true;
+                found_solution = false;
             }
+//
         }
 
         if (need_full_scan) {
@@ -2508,20 +2625,78 @@ namespace SKKU
                 break;
             }
         }
+        pbic_ik_jump_log = branch_jump ? 1.0f : 0.0f;
+
+//0609
+        // if (branch_jump) {
+        //     std::cout << "IK branch jump at joint " << jump_joint
+        //             << ", prev_cmd : " << previous_joint_command[jump_joint]
+        //             << ", ik_cmd : " << best_des[jump_joint]
+        //             << ", delta : " << jump_delta
+        //             << ", candidate sol_space : " << best_sol_space
+        //             << std::endl;
+
+        //     ROS_WARN("IK branch jump detected, holding previous joint command.");
+
+        //     for (int i = 0; i < 6; ++i) {
+        //         des[i] = previous_joint_command[i];
+        //     }
 
         if (branch_jump) {
-            std::cout << "IK branch jump at joint " << jump_joint
-                    << ", prev_cmd : " << previous_joint_command[jump_joint]
-                    << ", ik_cmd : " << best_des[jump_joint]
-                    << ", delta : " << jump_delta
-                    << ", candidate sol_space : " << best_sol_space
-                    << std::endl;
+            ROS_WARN_THROTTLE(
+                1.0,
+                "PBIC IK branch jump: joint=%d prev=%.3f ik=%.3f delta=%.3f sol=%d. Using differential IK fallback.",
+                jump_joint,
+                previous_joint_command[jump_joint],
+                best_des[jump_joint],
+                jump_delta,
+                best_sol_space
+            );
 
-            ROS_WARN("IK branch jump detected, holding previous joint command.");
+            Eigen::Matrix<float, 6, 1> xdot_imp =
+                Eigen::Matrix<float, 6, 1>::Zero();
+
+            // s.J는 qdot[rad/s] -> twist[m/s, rad/s] 기준이라고 보고 맞춤
+            xdot_imp(0) = imp.v_m(0) * 1e-3f;  // mm/s -> m/s
+            xdot_imp(1) = imp.v_m(1) * 1e-3f;
+            xdot_imp(2) = imp.v_m(2) * 1e-3f;
+            xdot_imp(3) = imp.w_m(0);          // rad/s
+            xdot_imp(4) = imp.w_m(1);
+            xdot_imp(5) = imp.w_m(2);
+
+            Eigen::Matrix<float, 6, 6> J_inv_for_fallback =
+                dampedPseudoInverse(s.J, 5e-3f);
+
+            Eigen::Matrix<float, 6, 1> qdot_fallback_rad =
+                J_inv_for_fallback * xdot_imp;
+
+            const float max_step_deg = 0.5f;  // 4ms 기준 125 deg/s 제한. 필요하면 1.0으로 완화
+            bool fallback_valid = true;
 
             for (int i = 0; i < 6; ++i) {
-                des[i] = previous_joint_command[i];
+                float step_deg = qdot_fallback_rad(i) * RAD2DEG * dt;
+
+                if (!std::isfinite(step_deg)) {
+                    fallback_valid = false;
+                    break;
+                }
+
+                if (step_deg >  max_step_deg) step_deg =  max_step_deg;
+                if (step_deg < -max_step_deg) step_deg = -max_step_deg;
+
+                des[i] = previous_joint_command[i] + step_deg;
             }
+
+            if (!fallback_valid) {
+                for (int i = 0; i < 6; ++i) {
+                    des[i] = previous_joint_command[i];
+                }
+                singularity_counter++;
+            } else {
+                // fallback은 실패가 아니라 연속 적분으로 처리
+                singularity_counter = 0;
+            }
+//
         } else {
             singularity_counter = 0;
 
@@ -2557,7 +2732,9 @@ namespace SKKU
         for (int i = 0; i < 6; ++i) {
             previous_joint_command[i] = des[i];
         }
-
+//0609
+        pbic_initial_ik_preselected_ = false;
+//
         count_motion++;
         return {des, is_singular};
     }  //  
