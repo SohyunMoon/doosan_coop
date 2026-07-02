@@ -143,6 +143,9 @@ private:
 #include <array>
 #include <cmath>
 #include <initializer_list>
+#include <atomic>
+#include <mutex>
+#include <thread>
 #include <eigen3/Eigen/Dense>
 #include <eigen3/Eigen/Geometry>
 #include <ros/ros.h>
@@ -350,6 +353,7 @@ typedef struct _Impedance {
 class Sensor_data {
 public:
     Sensor_data();
+    ~Sensor_data();
 
     // raw sensor wrench 반환
     std::array<float, 6> getAFTWrench() const;
@@ -364,10 +368,17 @@ public:
     std::array<float, 6> AFT_wrench_matched = {0, 0, 0, 0, 0, 0};
 
 private:
-    ros::NodeHandle nh_;
-    ros::Subscriber sensor_sub_;
+    bool openCanSocket();
+    bool initializeSensor();
+    void transmitMode();
+    void canReadLoop();
 
-    // ROS 콜백 함수: raw sensor data 업데이트
+    int can_socket_ = -1;
+    std::atomic<bool> can_running_{false};
+    std::thread can_thread_;
+    mutable std::mutex wrench_mutex_;
+
+    // Legacy ROS callback path. The direct-CAN path is used by default now.
     void sensorDataCallback(const std_msgs::Float32MultiArray::ConstPtr& msg);
 };
 

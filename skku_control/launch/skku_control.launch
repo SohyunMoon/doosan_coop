@@ -55,6 +55,7 @@
 	</node>
 
 	<node pkg="skku_control" type="publisher_node" name = "publisher_node" respawn="false" output="screen"/>
-	<node pkg="skku_control" type="can_communication_node" name="can_communication_node" respawn="false" output="screen"/>
+	<!-- AFT sensor is read directly inside Sensor_data now. Do not run the ROS bridge at the same time. -->
+	<!-- <node pkg="skku_control" type="can_communication_node" name="can_communication_node" respawn="false" output="screen"/> -->
 	
 </launch>
