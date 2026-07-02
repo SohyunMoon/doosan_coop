@@ -6002,9 +6002,6 @@ void ControlLoop::dataSaving() {
             (control_mode_ == "PBIC goal mode" ||
              control_mode_ == "PBIC path mode");
 
-        const auto aft_wrench = sensor_data.getAFTWrench();
-        const auto aft_wrench_matched = sensor_data.getMatchedAFTWrench();
-
         for (int i = 0; i < 6; ++i) {
             if (is_pbic_mode) {
                 impedance_position[i] = imp.pos_m(i);
@@ -6032,8 +6029,8 @@ void ControlLoop::dataSaving() {
             gripper_torque[i] = trq_gg[i];
             trq_ext_auto[i] = trq_ext2[i];
             trq_ext_cal[i] = trq_raw[i] - trq_g[i];
-            sensor_FT[i] = aft_wrench[i];
-            sensor_FT_matched[i] = aft_wrench_matched[i];
+            sensor_FT[i] = sensor_data.AFT_wrench_[i];
+            sensor_FT_matched[i] = sensor_data.AFT_wrench_matched[i];
 
             error[i] = errors.e[i];
             error_dot[i] = errors.de[i];

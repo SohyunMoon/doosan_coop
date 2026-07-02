@@ -3,33 +3,8 @@
 #include <ros/ros.h>
 #include <std_msgs/Float32MultiArray.h>
 #include <skku_tools/control_state.h>
-#include <cerrno>
-#include <cstring>
-#include <net/if.h>
-#include <sys/ioctl.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <unistd.h>
-#include <linux/can.h>
-#include <linux/can/raw.h>
 
 namespace SKKU {
-
-    namespace {
-        constexpr canid_t SENSOR_ID_1 = 0x01;
-        constexpr canid_t SENSOR_ID_2 = 0x02;
-        constexpr canid_t INDEX_ID = 0x102;
-        constexpr uint8_t SENSOR_ID = 0x01;
-        constexpr const char* CAN_INTERFACE = "can0";
-
-        float decodeForce(uint8_t high, uint8_t low) {
-            return (static_cast<int>(high) * 256 + static_cast<int>(low)) / 100.0f - 300.0f;
-        }
-
-        float decodeTorque(uint8_t high, uint8_t low) {
-            return (static_cast<int>(high) * 256 + static_cast<int>(low)) / 500.0f - 50.0f;
-        }
-    }
 
     // // Sensor_data 클래스의 생성자
     // Sensor_data::Sensor_data() {
@@ -52,47 +27,17 @@ namespace SKKU {
     // }
 
     Sensor_data::Sensor_data() {
-        if (!openCanSocket()) {
-            ROS_ERROR("Sensor_data: failed to open %s. AFT wrench will remain zero.", CAN_INTERFACE);
-            return;
-        }
-
-        if (!initializeSensor()) {
-            ROS_ERROR("Sensor_data: failed to initialize AFT sensor.");
-            close(can_socket_);
-            can_socket_ = -1;
-            return;
-        }
-
-        usleep(1000000);
-        transmitMode();
-
-        can_running_ = true;
-        can_thread_ = std::thread(&Sensor_data::canReadLoop, this);
-    }
-
-    Sensor_data::~Sensor_data() {
-        can_running_ = false;
-
-        if (can_socket_ >= 0) {
-            close(can_socket_);
-            can_socket_ = -1;
-        }
-
-        if (can_thread_.joinable()) {
-            can_thread_.join();
-        }
+        // ROS 노드 핸들 초기화 및 콜백 함수 연결
+        sensor_sub_ = nh_.subscribe("/sensor_data", 10, &Sensor_data::sensorDataCallback, this);
     }
 
     // raw sensor wrench 반환
     std::array<float, 6> Sensor_data::getAFTWrench() const {
-        std::lock_guard<std::mutex> lock(wrench_mutex_);
         return AFT_wrench_;
     }
 
     // matched sensor wrench 반환
     std::array<float, 6> Sensor_data::getMatchedAFTWrench() const {
-        std::lock_guard<std::mutex> lock(wrench_mutex_);
         return AFT_wrench_matched;
     }
 
@@ -103,19 +48,13 @@ namespace SKKU {
         // 기존에 네가 쓰던 부호 규칙 그대로 반영
         // ------------------------------------------------------------
         std::array<float, 6> matched = {0, 0, 0, 0, 0, 0};
-        std::array<float, 6> raw = {0, 0, 0, 0, 0, 0};
 
-        {
-            std::lock_guard<std::mutex> lock(wrench_mutex_);
-            raw = AFT_wrench_;
-        }
-
-        matched[0] = -raw[0];
-        matched[1] = -raw[1];
-        matched[2] =  raw[2];
-        matched[3] = -raw[3];
-        matched[4] = -raw[4];
-        matched[5] =  raw[5];
+        matched[0] = -AFT_wrench_[0];
+        matched[1] = -AFT_wrench_[1];
+        matched[2] =  AFT_wrench_[2];
+        matched[3] = -AFT_wrench_[3];
+        matched[4] = -AFT_wrench_[4];
+        matched[5] =  AFT_wrench_[5];
 
         // ------------------------------------------------------------
         // Step 2) rotate force / torque
@@ -138,138 +77,15 @@ namespace SKKU {
         // ------------------------------------------------------------
         // Step 3) 내부 저장
         // ------------------------------------------------------------
-        {
-            std::lock_guard<std::mutex> lock(wrench_mutex_);
-            AFT_wrench_matched = matched;
-        }
-        return matched;
+        AFT_wrench_matched = matched;
+        return AFT_wrench_matched;
     }
 
     // ROS 콜백 함수: raw sensor data 업데이트
     void Sensor_data::sensorDataCallback(const std_msgs::Float32MultiArray::ConstPtr& msg) {
         if (msg->data.size() >= 6) {
-            std::lock_guard<std::mutex> lock(wrench_mutex_);
             for (int i = 0; i < 6; ++i) {
                 AFT_wrench_[i] = msg->data[i];
-            }
-        }
-    }
-
-    bool Sensor_data::openCanSocket() {
-        can_socket_ = socket(PF_CAN, SOCK_RAW, CAN_RAW);
-        if (can_socket_ < 0) {
-            ROS_ERROR("Sensor_data: socket open failed: %s", std::strerror(errno));
-            return false;
-        }
-
-        timeval timeout;
-        timeout.tv_sec = 0;
-        timeout.tv_usec = 100000;
-        setsockopt(can_socket_, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-
-        struct ifreq ifr;
-        std::memset(&ifr, 0, sizeof(ifr));
-        std::strncpy(ifr.ifr_name, CAN_INTERFACE, IFNAMSIZ - 1);
-
-        if (ioctl(can_socket_, SIOCGIFINDEX, &ifr) < 0) {
-            ROS_ERROR("Sensor_data: ioctl SIOCGIFINDEX failed for %s: %s",
-                      CAN_INTERFACE, std::strerror(errno));
-            close(can_socket_);
-            can_socket_ = -1;
-            return false;
-        }
-
-        struct sockaddr_can addr;
-        std::memset(&addr, 0, sizeof(addr));
-        addr.can_family = AF_CAN;
-        addr.can_ifindex = ifr.ifr_ifindex;
-
-        if (bind(can_socket_, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
-            ROS_ERROR("Sensor_data: bind failed for %s: %s",
-                      CAN_INTERFACE, std::strerror(errno));
-            close(can_socket_);
-            can_socket_ = -1;
-            return false;
-        }
-
-        return true;
-    }
-
-    bool Sensor_data::initializeSensor() {
-        if (can_socket_ < 0) {
-            return false;
-        }
-
-        struct can_frame frame;
-        std::memset(&frame, 0, sizeof(frame));
-        frame.can_id = INDEX_ID;
-        frame.can_dlc = 8;
-        frame.data[0] = SENSOR_ID;
-        frame.data[1] = 0x02;
-        frame.data[2] = 0x01;
-
-        if (write(can_socket_, &frame, sizeof(struct can_frame)) != sizeof(struct can_frame)) {
-            ROS_ERROR("Sensor_data: initialize command failed: %s", std::strerror(errno));
-            return false;
-        }
-
-        ROS_INFO("Sensor_data: initialize command sent successfully.");
-        return true;
-    }
-
-    void Sensor_data::transmitMode() {
-        if (can_socket_ < 0) {
-            return;
-        }
-
-        struct can_frame frame;
-        std::memset(&frame, 0, sizeof(frame));
-        frame.can_id = INDEX_ID;
-        frame.can_dlc = 8;
-        frame.data[0] = SENSOR_ID;
-        frame.data[1] = 0x03;
-        frame.data[2] = 0x01;
-
-        if (write(can_socket_, &frame, sizeof(struct can_frame)) != sizeof(struct can_frame)) {
-            ROS_ERROR("Sensor_data: transmit mode command failed: %s", std::strerror(errno));
-        } else {
-            ROS_INFO("Sensor_data: transmit mode command sent successfully.");
-        }
-    }
-
-    void Sensor_data::canReadLoop() {
-        struct can_frame frame;
-
-        while (can_running_) {
-            ssize_t nbytes = read(can_socket_, &frame, sizeof(struct can_frame));
-
-            if (!can_running_) {
-                break;
-            }
-
-            if (nbytes < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
-                    continue;
-                }
-
-                ROS_WARN_THROTTLE(1.0, "Sensor_data: CAN read failed: %s", std::strerror(errno));
-                continue;
-            }
-
-            if (nbytes != sizeof(struct can_frame)) {
-                continue;
-            }
-
-            std::lock_guard<std::mutex> lock(wrench_mutex_);
-
-            if (frame.can_id == SENSOR_ID_1) {
-                AFT_wrench_[0] = decodeForce(frame.data[0], frame.data[1]);
-                AFT_wrench_[1] = decodeForce(frame.data[2], frame.data[3]);
-                AFT_wrench_[2] = decodeForce(frame.data[4], frame.data[5]);
-            } else if (frame.can_id == SENSOR_ID_2) {
-                AFT_wrench_[3] = decodeTorque(frame.data[0], frame.data[1]);
-                AFT_wrench_[4] = decodeTorque(frame.data[2], frame.data[3]);
-                AFT_wrench_[5] = decodeTorque(frame.data[4], frame.data[5]);
             }
         }
     }
