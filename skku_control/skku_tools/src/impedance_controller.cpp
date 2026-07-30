@@ -555,14 +555,17 @@ namespace SKKU
 
         M_gains = {imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000};
         // K_gains = {3*imp_k, 3*imp_k, imp_k, imp_k, imp_k, imp_k};
-        K_gains = {1.0f*imp_k, 1.0f*imp_k, 1.0f*imp_k, 75.0f * imp_k, 75.0f * imp_k, 75.0f * imp_k};
-        for (int i = 0; i < 6; ++i)
+        K_gains = {0.5f*imp_k, 1.0f*imp_k, 2.0f*imp_k, 50.0f * imp_k, 75.0f * imp_k, 50.0f * imp_k};
+        for (int i = 0; i < 3; ++i)
         {
             // B_gains[i] = 2 * sqrt(K_gains[i] * M_gains[i]); // 2 critical dmaped
-            B_gains[i] = 1.4 * sqrt(K_gains[i] * M_gains[i]); // 4 Overdmaped
+            B_gains[i] = 8 * sqrt(K_gains[i] * M_gains[i]); // 4 Overdmaped
             
             // B_gains[i] = 0.5 * sqrt(K_gains[i] * M_gains[i]); // 2 Underdmaped
         }
+        B_gains[3] = 16 * sqrt(K_gains[3] * M_gains[3]);
+        B_gains[4] = 16 * sqrt(K_gains[4] * M_gains[4]);
+        B_gains[5] = 16 * sqrt(K_gains[5] * M_gains[5]);
     }
 
 
@@ -1058,8 +1061,8 @@ namespace SKKU
 
         // 축별 LPF 계수 (작을수록 더 부드러움)
         Eigen::Matrix<float, 6, 1> edot_alpha;
-        edot_alpha << 0.2f, 0.2f, 0.2f,
-                    1.0f, 1.0f, 1.0f;
+        edot_alpha << 0.1f, 0.1f, 0.1f,
+                    0.1f, 0.1f, 0.1f;
 
         // edot 변화율 제한 (단위: linear = mm/s^2, angular = rad/s^2)
         // const float linear_edot_slew_rate  = 5.0f;
@@ -1231,9 +1234,7 @@ namespace SKKU
             Eigen::Matrix<float, 6, 1>::Zero();
 
         if (ft_ready) {
-            Eigen::Matrix<float, 6, 1> Fext_extra_offset;
-            Fext_extra_offset << 0.0f, 0.0f, -0.75f, 0.0f, 0.0f, 0.0f;
-            Fext_raw = Fft_raw - Fext_extra_offset;
+            Fext_raw = Fft_raw;
         }
 
         //external_joint_torque use
@@ -1516,7 +1517,6 @@ namespace SKKU
             //     }
 
             //     float tau_comp_cmd = 0.0f;
-
             //     if (direction != 0.0f &&
             //         std::fabs(actual_velocityj[i]) < vel_release) {
             //         tau_comp_cmd = direction * tau_dead;
@@ -2228,13 +2228,31 @@ namespace SKKU
         Eigen::Matrix<float, 6, 1> Fext_raw =
             Eigen::Matrix<float, 6, 1>::Zero();
 
-        Eigen::Matrix<float, 6, 1> Fext_extra_offset;
-        // Fext_extra_offset << 0.0f, 0.1f, -0.95f, 0.0f, 0.0f, 0.0f;
-        Fext_extra_offset << 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f;
-        Fext_raw = Fft_raw - Fext_extra_offset;
+        Fext_raw = Fft_raw;
 
-        F_ext = Fext_raw;
+// 0729 PBIC 외력 1차 LPF
 
+        // 0729 matched Ty 부호 반전
+        Fext_raw(4) = -Fext_raw(4);
+
+        constexpr float kPi = 3.14159265358979323846f;
+        constexpr float kFextCutoffHz = 5.0f;
+
+        const float alpha_fext =
+            1.0f - std::exp(-2.0f * kPi * kFextCutoffHz * dt);
+
+        if (!pbic_fext_filter_init) {
+            // 첫 샘플을 그대로 초기값으로 사용해서 시작 충격 방지
+            Fext_filt = Fext_raw;
+            pbic_fext_filter_init = true;
+        } else {
+            Fext_filt += alpha_fext * (Fext_raw - Fext_filt);
+        }
+
+        F_ext = Fext_filt;
+
+        // F_ext = Fext_raw;
+//
         //FT센서사용으로 비활성화
         Eigen::Matrix<float, 6, 6> J_inv = dampedPseudoInverse(s.J, 5e-3f);
 

@@ -369,8 +369,6 @@ public:
 
 private:
     bool openCanSocket();
-    bool initializeSensor();
-    void transmitMode();
     void canReadLoop();
 
     int can_socket_ = -1;

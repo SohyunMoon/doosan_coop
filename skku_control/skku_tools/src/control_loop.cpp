@@ -2977,6 +2977,8 @@ bool controlState = false;
 namespace {
     constexpr float DEG2RAD = static_cast<float>(M_PI) / 180.0f;
     constexpr float RAD2DEG = 180.0f / static_cast<float>(M_PI);
+//new0723
+     constexpr double kGoalHoldTimeSec = 3.0;
 
     inline Eigen::Quaternionf normalizeQuat(Eigen::Quaternionf q) {
         if (q.norm() < 1e-6f) {
@@ -3563,22 +3565,46 @@ void TrajectoryGen::initDBICGoal(const Eigen::Vector3f& p0_m,
     // dbic_T_ = std::max(1e-3, msg.points[0].time_from_start.toSec());
 
     // 실제 사용자가 보낸 goal time을 그대로 사용한다.
+//new0723
+    // const double T_cmd = msg.points[0].time_from_start.toSec();
+    // dbic_T_ = std::max(1e-3, T_cmd);
+
+    // std::cout << "[DBIC INIT] requested_T=" << T_cmd
+    //           << " dbic_T_=" << dbic_T_ << std::endl;
     const double T_cmd = msg.points[0].time_from_start.toSec();
-    dbic_T_ = std::max(1e-3, T_cmd);
 
-    std::cout << "[DBIC INIT] requested_T=" << T_cmd
-              << " dbic_T_=" << dbic_T_ << std::endl;
+    if (T_cmd <= kGoalHoldTimeSec) {
+        throw std::invalid_argument(
+            "Goal trajectory time must be greater than hold time.");
+    }
 
+    dbic_T_ = T_cmd;
+
+    const double move_time = dbic_T_ - kGoalHoldTimeSec;
+
+    std::cout << "[DBIC INIT] requested_T=" << dbic_T_
+            << " move_T=" << move_time
+            << " hold_T=" << kGoalHoldTimeSec
+            << std::endl;
+//
 }
 
 TaskRef TrajectoryGen::sampleDBICGoal(double t_sec, double dt_sec) const {
     auto clamp01 = [](double x) {
         return std::max(0.0, std::min(1.0, x));
     };
+//new0723
+    // auto samplePoseOnly = [&](double ts, Eigen::Vector3f& p, Eigen::Quaternionf& q) {
+    //     double tau = clamp01(ts / dbic_T_);
 
-    auto samplePoseOnly = [&](double ts, Eigen::Vector3f& p, Eigen::Quaternionf& q) {
-        double tau = clamp01(ts / dbic_T_);
+    // 전체 명령 시간에서 hold 시간을 제외한 실제 이동시간
+    const double move_time = dbic_T_ - kGoalHoldTimeSec;
 
+    auto samplePoseOnly = [&](double ts,
+                              Eigen::Vector3f& p,
+                              Eigen::Quaternionf& q) {
+        double tau = clamp01(ts / move_time);
+//
         double s =
             10.0 * std::pow(tau, 3) -
             15.0 * std::pow(tau, 4) +
@@ -3613,8 +3639,10 @@ TaskRef TrajectoryGen::sampleDBICGoal(double t_sec, double dt_sec) const {
 
     ref.w_d     = 0.5f * (w_p + w_m);
     ref.alpha_d = (w_p - w_m) / static_cast<float>(dt_sec);
-
-    if (t_sec >= dbic_T_) {
+//new0723
+    // if (t_sec >= dbic_T_) {
+    if (t_sec >= move_time) {
+//
         ref.p_d = dbic_pf_;
         ref.q_d = dbic_qf_;
         ref.v_d.setZero();
@@ -4290,6 +4318,38 @@ void PositionControlLoop::operator_jpath(const moveit_msgs::CartesianTrajectory&
     
 //     previous_msg = msg;
 // }
+//0727
+bool ImpedanceControlLoop::restartRtControlIfNeeded() {
+    // 첫 번째 명령에서는 RT 제어가 이미 활성화되어 있다.
+    if (!rt_control_needs_restart_) {
+        return true;
+    }
+
+    const bool rt_start_ok = Drfl_.start_rt_control();
+
+    std::cout << "[RT START] start_rt_control="
+              << rt_start_ok << std::endl;
+
+    if (!rt_start_ok) {
+        ROS_ERROR("Failed to restart RT control.");
+        return false;
+    }
+
+    rt_control_needs_restart_ = false;
+
+    // RT 재시작 후 기존 제어 모드를 다시 적용
+    Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
+    Drfl_.set_safety_mode(
+        SAFETY_MODE_AUTONOMOUS,
+        SAFETY_MODE_EVENT_MOVE);
+
+    // RT 상태가 전환될 짧은 시간을 확보
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(10));
+
+    return true;
+}
+//
 void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& msg) {
     std::cout << "\n======================================================\n";
     std::cout << "[INFO] PB-IC Goal Mode called" << std::endl;
@@ -4309,7 +4369,6 @@ void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& m
         fail = 2;
         return;
     }
-
     // 필요하면 사용, 정의가 없으면 이 줄은 지워도 됨
     // logRequestedGoalPose(this, msg);
 
@@ -4399,6 +4458,14 @@ void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& m
         fail = 2;
         return;
     }
+//0727
+    // 직전 goal에서 RT 제어를 정지했다면 여기서 재시작
+    if (!restartRtControlIfNeeded()) {
+        ROS_ERROR("PBIC aborted because RT control could not be restarted.");
+        fail = 2;
+        return;
+    }
+//
     //
 
     Duration control_loop_time = Duration(loop_time_);
@@ -4415,9 +4482,9 @@ void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& m
     if (kEnablePbicDataSaving) {
         startDataSaving();
     }
-
-    bool entered_hold_phase = false;
-
+//new0723
+    // bool entered_hold_phase = false;
+//
     while (true) {
         robot_state = Drfl_.read_data_rt();
 
@@ -4479,7 +4546,9 @@ void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& m
         // 정상 종료: 마지막 nominal sample은 이미 한 번 보냈고 hold phase로 이동
         if (!motion_ok) {
             if (g_pbic_goal_motion_finished) {
-                entered_hold_phase = true;
+//new0723
+                // entered_hold_phase = true;
+//
                 std::cout << "[PBIC BREAK] nominal trajectory finished.\n";
                 break;
             } else {
@@ -4489,62 +4558,111 @@ void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& m
             }
         }
     }
-
+//new0723
     // --------------------------------------------------------------
     // 3) Hold / settling phase
     //    마지막 desired.q_d를 잠시 유지하여 수렴 확인
     // --------------------------------------------------------------
-    if (entered_hold_phase && fail == 0) {
-        const float joint_tol_deg = 0.5f;
-        const double hold_timeout_sec = 3.0;
+//     if (entered_hold_phase && fail == 0) {
+//         const float joint_tol_deg = 0.5f;
+//         const double hold_timeout_sec = 3.0;
+//         const double post_collision_log_sec = 1.0;
 
-        const int hold_steps = static_cast<int>(
-            std::ceil(hold_timeout_sec / (static_cast<double>(loop_time_) * 1e-3)));
 
-        std::cout << "[PBIC HOLD] start" << std::endl;
+//         const int hold_steps = static_cast<int>(
+//             std::ceil(hold_timeout_sec / (static_cast<double>(loop_time_) * 1e-3)));
 
-        start = std::chrono::high_resolution_clock::now();
+//         const int min_hold_steps = static_cast<int>(
+//             std::ceil(post_collision_log_sec / (static_cast<double>(loop_time_) * 1e-3)));
 
-        for (int hold_count = 0; hold_count < hold_steps; ++hold_count) {
-            robot_state = Drfl_.read_data_rt();
+//         std::cout << "[PBIC HOLD] start" << std::endl;
 
-            bool control_ok =
-                spinControl(robot_state, control_loop_time, control_command, desired, sol_space);
+//         start = std::chrono::high_resolution_clock::now();
 
-            if (!control_ok || exitLoop || g_nKill_dsr_control) {
-                fail = 2;
-                break;
-            }
+//         for (int hold_count = 0; hold_count < hold_steps; ++hold_count) {
+//             robot_state = Drfl_.read_data_rt();
+// //이것까지 빼야함 1초 이상 측정 안할려면
+//             // Trajectory hold_traj = trajectory;
+//             // hold_traj.vel_d = {0, 0, 0, 0, 0, 0, 0};
+//             // hold_traj.acc_d = {0, 0, 0, 0, 0, 0, 0};
+//             // hold_traj.w_d = {0, 0, 0};
+//             // hold_traj.alpha_d = {0, 0, 0};
 
-            Drfl_.torque_rt(control_command.tau_d, st);
+//             // bool correction_flag = false;
 
-            float max_joint_err_deg = 0.0f;
-            for (int i = 0; i < 6; ++i) {
-                float delta = desired.q_d[i] - robot_state->actual_joint_position[i];
-                while (delta > 180.0f) delta -= 360.0f;
-                while (delta < -180.0f) delta += 360.0f;
-                max_joint_err_deg = std::max(max_joint_err_deg, std::fabs(delta));
-            }
+//             // auto [output, is_singular] =
+//             //     MotionGenerator(hold_traj,
+//             //                     robot_state,
+//             //                     prev,
+//             //                     imp,
+//             //                     sol_space,
+//             //                     correction_flag,
+//             //                     operator_call_count_,
+//             //                     task_point_mode_,
+//             //                     T_flange_tcp_);
 
-            auto current = std::chrono::high_resolution_clock::now();
-            Duration loop_time(
-                std::chrono::duration_cast<std::chrono::milliseconds>(current - start));
-            loopTimes.push_back(loop_time.toMSec());
+//             // if (is_singular) {
+//             //     fail = 2;
+//             //     break;
+//             // }
 
-            if (control_loop_time > loop_time) {
-                std::this_thread::sleep_for(control_loop_time() - loop_time());
-            }
+//             // desired.q_d = output;
+// //
+//             bool control_ok =
+//                 spinControl(robot_state, control_loop_time, control_command, desired, sol_space);
 
-            start = std::chrono::high_resolution_clock::now();
+//             if (!control_ok || exitLoop || g_nKill_dsr_control) {
+//                 fail = 2;
+//                 break;
+//             }
 
-            if (max_joint_err_deg < joint_tol_deg) {
-                std::cout << "[PBIC HOLD] settled, max_joint_err_deg="
-                          << max_joint_err_deg << std::endl;
-                break;
-            }
-        }
+//             Drfl_.torque_rt(control_command.tau_d, st);
+
+//             float max_joint_err_deg = 0.0f;
+//             for (int i = 0; i < 6; ++i) {
+//                 float delta = desired.q_d[i] - robot_state->actual_joint_position[i];
+//                 while (delta > 180.0f) delta -= 360.0f;
+//                 while (delta < -180.0f) delta += 360.0f;
+//                 max_joint_err_deg = std::max(max_joint_err_deg, std::fabs(delta));
+//             }
+
+//             auto current = std::chrono::high_resolution_clock::now();
+//             Duration loop_time(
+//                 std::chrono::duration_cast<std::chrono::milliseconds>(current - start));
+//             loopTimes.push_back(loop_time.toMSec());
+
+//             if (control_loop_time > loop_time) {
+//                 std::this_thread::sleep_for(control_loop_time() - loop_time());
+//             }
+
+//             start = std::chrono::high_resolution_clock::now();
+
+//             // if (max_joint_err_deg < joint_tol_deg) {
+//             if (hold_count >= min_hold_steps &&
+//                 max_joint_err_deg < joint_tol_deg) {
+//                 std::cout << "[PBIC HOLD] settled, max_joint_err_deg="
+//                           << max_joint_err_deg << std::endl;
+//                 break;
+//             }
+//         }
+//     }
+//
+//0727
+    // bool rt_stop_ok = Drfl_.stop_rt_control();
+    // std::cout << "[RT STOP] stop_rt_control=" << rt_stop_ok << std::endl;
+    const bool rt_stop_ok = Drfl_.stop_rt_control();
+
+    // stop을 시도한 이후에는 다음 명령에서 RT 시작을 다시 시도한다.
+    rt_control_needs_restart_ = true;
+
+    std::cout << "[RT STOP] stop_rt_control="
+            << rt_stop_ok << std::endl;
+
+    if (!rt_stop_ok) {
+        ROS_ERROR("Failed to stop RT control cleanly.");
+        fail = 2;
     }
-
+//
     if (kEnablePbicDataSaving) {
         stopDataSaving();
         saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
@@ -4769,7 +4887,13 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
         getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
 
     trajectory_gen_.initDBICGoal(current_task_state.p, current_task_state.q, msg);
-
+//0727
+    if (!restartRtControlIfNeeded()) {
+        ROS_ERROR("DBIC aborted because RT control could not be restarted.");
+        fail = 2;
+        return;
+    }
+//
     Duration control_loop_time = Duration(loop_time_);
     float st = static_cast<float>(loop_time_) / 1000.0f;
 
@@ -4792,9 +4916,10 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
     TaskRef ref_task;
 
     // hold phase용 상태 변수는 while 바깥에서 선언해야 한다.
-    bool entered_hold_phase = false;
-    TaskRef hold_ref_task{};
-
+//new0723
+    // bool entered_hold_phase = false;
+    // TaskRef hold_ref_task{};
+//
     while (true) {
         robot_state = Drfl_.read_data_rt();
 
@@ -4833,17 +4958,18 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
 
         // trajectory 시간이 끝났으면 final reference를 hold phase로 넘긴다.
         if (!motion_ok) {
-            entered_hold_phase = true;
-            hold_ref_task = ref_task;
+//new0723
+            // entered_hold_phase = true;
+            // hold_ref_task = ref_task;
 
-            // hold 단계에서는 "정지한 최종 목표"를 유지해야 하므로
-            // 속도/가속도 reference는 0으로 만든다.
-            hold_ref_task.v_d.setZero();
-            hold_ref_task.a_d.setZero();
-            hold_ref_task.w_d.setZero();
-            hold_ref_task.alpha_d.setZero();
-            hold_ref_task.motion_finished = false;
-
+            // // hold 단계에서는 "정지한 최종 목표"를 유지해야 하므로
+            // // 속도/가속도 reference는 0으로 만든다.
+            // hold_ref_task.v_d.setZero();
+            // hold_ref_task.a_d.setZero();
+            // hold_ref_task.w_d.setZero();
+            // hold_ref_task.alpha_d.setZero();
+            // hold_ref_task.motion_finished = false;
+//
             std::cout << "[DBIC BREAK] motion_ok=" << motion_ok
                       << ", control_ok=" << control_ok
                       << ", count=" << count
@@ -4852,72 +4978,92 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
             break;
         }
     }
-
+//new0723
     // ------------------------------------------------------------
     // Hold / settling phase
     // ------------------------------------------------------------
-    if (entered_hold_phase && fail == 0) {
-        const float pos_tol_m = 0.005f;      // 5 mm
-        const float rot_tol_rad = 0.02f;     // 약 1.15 deg
-        const double hold_timeout_sec = 3.0;
+    // if (entered_hold_phase && fail == 0) {
+    //     const float pos_tol_m = 0.005f;      // 5 mm
+    //     const float rot_tol_rad = 0.02f;     // 약 1.15 deg
+    //     const double hold_timeout_sec = 3.0;
+    //     const double post_collision_log_sec = 1.0;
+    //     const int hold_steps = static_cast<int>(
+    //         std::ceil(hold_timeout_sec / (static_cast<double>(loop_time_) * 1e-3)));
+    //     const int min_hold_steps = static_cast<int>(
+    //         std::ceil(post_collision_log_sec / (static_cast<double>(loop_time_) * 1e-3)));
+    //     std::cout << "[DBIC HOLD] start" << std::endl;
 
-        const int hold_steps = static_cast<int>(
-            std::ceil(hold_timeout_sec / (static_cast<double>(loop_time_) * 1e-3)));
+    //     // hold loop는 별도의 주기 타이밍만 관리하면 된다.
+    //     start = std::chrono::high_resolution_clock::now();
 
-        std::cout << "[DBIC HOLD] start" << std::endl;
+    //     for (int hold_count = 0; hold_count < hold_steps; ++hold_count) {
+    //         robot_state = Drfl_.read_data_rt();
 
-        // hold loop는 별도의 주기 타이밍만 관리하면 된다.
-        start = std::chrono::high_resolution_clock::now();
+    //         TaskState s_hold =
+    //             getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
 
-        for (int hold_count = 0; hold_count < hold_steps; ++hold_count) {
-            robot_state = Drfl_.read_data_rt();
+    //         const float pos_err_m =
+    //             (hold_ref_task.p_d - s_hold.p).norm();
+    //         const float rot_err_rad =
+    //             quatLogError(hold_ref_task.q_d, s_hold.q).norm();
 
-            TaskState s_hold =
-                getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
+    //         bool control_ok =
+    //             spinControlDBIC(robot_state, control_loop_time, control_command, hold_ref_task);
 
-            const float pos_err_m =
-                (hold_ref_task.p_d - s_hold.p).norm();
-            const float rot_err_rad =
-                quatLogError(hold_ref_task.q_d, s_hold.q).norm();
+    //         if (!control_ok || exitLoop || g_nKill_dsr_control) {
+    //             fail = 2;
+    //             break;
+    //         }
 
-            bool control_ok =
-                spinControlDBIC(robot_state, control_loop_time, control_command, hold_ref_task);
+    //         Drfl_.torque_rt(control_command.tau_d, st);
 
-            if (!control_ok || exitLoop || g_nKill_dsr_control) {
-                fail = 2;
-                break;
-            }
+    //         auto current = std::chrono::high_resolution_clock::now();
+    //         Duration loop_time(
+    //             std::chrono::duration_cast<std::chrono::milliseconds>(current - start));
+    //         loopTimes.push_back(loop_time.toMSec());
 
-            Drfl_.torque_rt(control_command.tau_d, st);
+    //         if (control_loop_time > loop_time) {
+    //             std::this_thread::sleep_for(control_loop_time() - loop_time());
+    //         }
 
-            auto current = std::chrono::high_resolution_clock::now();
-            Duration loop_time(
-                std::chrono::duration_cast<std::chrono::milliseconds>(current - start));
-            loopTimes.push_back(loop_time.toMSec());
+    //         start = std::chrono::high_resolution_clock::now();
 
-            if (control_loop_time > loop_time) {
-                std::this_thread::sleep_for(control_loop_time() - loop_time());
-            }
+    //         // hold loop에서는 count++ 하지 않는다.
+    //         // 여기서는 trajectory time을 전진시키는 게 아니라,
+    //         // final reference를 고정한 채 수렴만 시키는 단계다.
 
-            start = std::chrono::high_resolution_clock::now();
+    //         // if (pos_err_m < pos_tol_m && rot_err_rad < rot_tol_rad) {
+    //         if (hold_count >= min_hold_steps &&
+    //             pos_err_m < pos_tol_m && rot_err_rad < rot_tol_rad) {
+    //             std::cout << "[DBIC HOLD] settled, pos_err_mm="
+    //                       << pos_err_m * 1000.0f
+    //                       << ", rot_err_rad=" << rot_err_rad
+    //                       << std::endl;
+    //             break;
+    //         }
+    //     }
+    // }
+//
 
-            // hold loop에서는 count++ 하지 않는다.
-            // 여기서는 trajectory time을 전진시키는 게 아니라,
-            // final reference를 고정한 채 수렴만 시키는 단계다.
-
-            if (pos_err_m < pos_tol_m && rot_err_rad < rot_tol_rad) {
-                std::cout << "[DBIC HOLD] settled, pos_err_mm="
-                          << pos_err_m * 1000.0f
-                          << ", rot_err_rad=" << rot_err_rad
-                          << std::endl;
-                break;
-            }
-        }
-    }
 //new0322
     // stopDataSaving();
     // saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
     // controlState = false;
+//0727
+    // Drfl_.stop_rt_control();
+    const bool rt_stop_ok = Drfl_.stop_rt_control();
+
+    // 다음 goal 명령에서 RT 제어를 다시 시작해야 한다.
+    rt_control_needs_restart_ = true;
+
+    std::cout << "[RT STOP] stop_rt_control="
+            << rt_stop_ok << std::endl;
+
+    if (!rt_stop_ok) {
+        ROS_ERROR("Failed to stop RT control cleanly.");
+        fail = 2;
+    }
+//
     if (kEnableDbicDataSaving) {
         stopDataSaving();
         saveLoopTimesToFile(dataDirectory + "/loop_times.txt");
@@ -5067,6 +5213,10 @@ void ImpedanceControlLoop::runDBICPath(const moveit_msgs::CartesianTrajectory& m
 }
 
 void ImpedanceControlLoop::operator()(const moveit_msgs::CartesianTrajectory& msg) {
+    if (runGainMoveIfEnabled()) {
+        return;
+    }
+
     switch (impedance_impl_mode_) {
         case ImpedanceImplMode::kDBIC:
             runDBICGoal(msg);
@@ -5079,6 +5229,10 @@ void ImpedanceControlLoop::operator()(const moveit_msgs::CartesianTrajectory& ms
 }
 
 void ImpedanceControlLoop::operator_path(const moveit_msgs::CartesianTrajectory& msg) {
+    if (runGainMoveIfEnabled()) {
+        return;
+    }
+
     switch (impedance_impl_mode_) {
         case ImpedanceImplMode::kDBIC:
             runDBICPath(msg);
@@ -5088,6 +5242,41 @@ void ImpedanceControlLoop::operator_path(const moveit_msgs::CartesianTrajectory&
             runPBICPath(msg);
             break;
     }
+}
+
+bool ImpedanceControlLoop::runGainMoveIfEnabled() {
+    if (!gain_move_enabled_) {
+        return false;
+    }
+
+    ROS_WARN("gain_move_enabled_=true: running GainMove and skipping the impedance controller");
+
+    // The normal PBIC/DBIC path creates the log directory after incrementing
+    // operator_call_count_. Gain-only mode returns before that path, so create
+    // its directory explicitly before the logging thread starts.
+    createNewDataDirectory();
+    isDirectoryCreated = true;
+
+    gaincheckloop.store(false, std::memory_order_release);
+    std::thread gain_saving_thread(&ControlLoop::gaindataSavingThread, this);
+
+    try {
+        GainMove();
+    } catch (...) {
+        gaincheckloop.store(true, std::memory_order_release);
+        if (gain_saving_thread.joinable()) {
+            gain_saving_thread.join();
+        }
+        throw;
+    }
+
+    gaincheckloop.store(true, std::memory_order_release);
+    if (gain_saving_thread.joinable()) {
+        gain_saving_thread.join();
+    }
+
+    ROS_WARN("GainMove finished: returning without starting PBIC/DBIC");
+    return true;
 }
 //new0406(old version)
 // bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state, SKKU::Duration time_step, Desired& desired, int sol_space) {
@@ -5580,11 +5769,13 @@ void ControlLoop::gaindataSavingThread() {
     float actual_position2[NUMBER_OF_JOINT] = {0,};
     float joint_error[NUMBER_OF_JOINT] = {0,};
     float position_error[NUMBER_OF_JOINT] = {0,};
+    float sensor_FT[NUMBER_OF_JOINT] = {0,};
+    float sensor_FT_matched[NUMBER_OF_JOINT] = {0,};
     float time[1] = {0,};
 
     auto start = std::chrono::high_resolution_clock::now();
     bool correction_flag = false;
-    while (!gaincheckloop){
+    while (!gaincheckloop.load(std::memory_order_acquire)){
         LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
         //new0411
         // MotionGenerator(trajectory, robot_state, prev, imp, sol_space,correction_flag,operator_call_count_);
@@ -5612,6 +5803,16 @@ void ControlLoop::gaindataSavingThread() {
         }
         
         convertToArray(trajectory.pos_d, traj_position);
+
+        const auto aft_wrench = sensor_data.getAFTWrench();
+        float (*current_rotm)[3] = Drfl_.get_current_rotm();
+        Eigen::Matrix3f R_for_aft;
+        for (int row = 0; row < 3; ++row) {
+            for (int col = 0; col < 3; ++col) {
+                R_for_aft(row, col) = current_rotm[row][col];
+            }
+        }
+        const auto aft_wrench_matched = sensor_data.matchAFTWrench(R_for_aft);
         
         float traj_position_6d[6] = {0,};
         traj_position_6d[0] = traj_position[0]; 
@@ -5640,6 +5841,8 @@ void ControlLoop::gaindataSavingThread() {
             F_external[i] = F.Fext[i];
             F_impedance[i] = F.Fimp[i];
             joint_error[i] = position_command[i] - actual_positionj[i];
+            sensor_FT[i] = aft_wrench[i];
+            sensor_FT_matched[i] = aft_wrench_matched[i];
         }
         time[0] += dt;
         //
@@ -5655,6 +5858,8 @@ void ControlLoop::gaindataSavingThread() {
         logData("gravity_torque.txt", gravity_torque, NUMBER_OF_JOINT);
         logData("external_torque.txt", external_torque, NUMBER_OF_JOINT);
         logData("force_external.txt",F_external, NUMBER_OF_JOINT);
+        logData("sensor_FT.txt", sensor_FT, NUMBER_OF_JOINT);
+        logData("sensor_FT_matched.txt", sensor_FT_matched, NUMBER_OF_JOINT);
 
         auto current = std::chrono::high_resolution_clock::now();
         Duration save_time(std::chrono::duration_cast<std::chrono::milliseconds>(current - start));
@@ -6001,9 +6206,23 @@ void ControlLoop::dataSaving() {
         const bool is_pbic_mode =
             (control_mode_ == "PBIC goal mode" ||
              control_mode_ == "PBIC path mode");
-
+//0720
+        // const auto aft_wrench = sensor_data.getAFTWrench();
+        // const auto aft_wrench_matched = sensor_data.getMatchedAFTWrench();
         const auto aft_wrench = sensor_data.getAFTWrench();
-        const auto aft_wrench_matched = sensor_data.getMatchedAFTWrench();
+
+        std::array<float, 6> aft_wrench_matched;
+        if (is_pbic_mode) {
+            Eigen::Matrix3f R_for_aft;
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    R_for_aft(i, j) = rotationMatrix[i][j];
+                }
+            }
+            aft_wrench_matched = sensor_data.matchAFTWrench(R_for_aft);
+        } else {
+            aft_wrench_matched = sensor_data.getMatchedAFTWrench();
+        }
 
         for (int i = 0; i < 6; ++i) {
             if (is_pbic_mode) {
@@ -6277,11 +6496,24 @@ void ControlLoop::convertToArray(const std::array<float, 7>& stdArray, float flo
 }
 
 void ControlLoop::GainMove() {
-    float step = 4;
+    // General settings
+    float step = 10;
     float tTime = 5;
     float tvel[2] = { 70, 70 };
     float tacc[2] = { 120, 120 };
 
+    const int total_heights = static_cast<int>(step) + 1;
+    if (gain_start_height_ < 1 || gain_start_height_ > total_heights) {
+        ROS_ERROR("Invalid gain_start_height_=%d. Valid range is 1..%d.",
+                  gain_start_height_, total_heights);
+        gaincheckloop.store(true, std::memory_order_release);
+        return;
+    }
+    const int start_height_index = gain_start_height_ - 1;
+    ROS_WARN("GainMove resumes from height %d of %d",
+             gain_start_height_, total_heights);
+
+    // TUB and TABLE configurations
     struct Config {
         float ztop;
         float check_X1[6];
@@ -6295,17 +6527,41 @@ void ControlLoop::GainMove() {
 
     std::vector<Config> configurations;
 
+    // TUB configuration
+    // configurations.push_back({
+    //     {500, -180, 600, 0, -180, 3.42},  // X1
+    //     {770, -180, 600, 0, -180, 3.42},  // X2
+    //     {770, 180, 600, 0, -180, 3.42},   // X3
+    //     {500, 180, 600, 0, -180, 3.42},   // X4
+    //     (700 - 390) / step,               // zdp
+    //     (770 - 500) / (2 * step),         // xdp
+    //     (180 - -180) / (2 * step)         // ydp
+    //     });
+
     configurations.push_back({
         600,
-        {300, -400, 600, 0, -180, 3.42},  // X1
+        {400, -400, 600, 0, -180, 3.42},  // X1
         {900, -400, 600, 0, -180, 3.42},  // X2
         {900, 400, 600, 0, -180, 3.42},   // X3
-        {300, 400, 600, 0, -180, 3.42},   // X4
-        (600 - 360) / step,               // zdp
-        (900 - 300) / (2 * step),         // xdp
+        {400, 400, 600, 0, -180, 3.42},   // X4
+        (600 - 220) / step,               // zdp
+        (900 - 400) / (2 * step),         // xdp
         (400  + 400) / (2 * step)         // ydp
         });
 
+    // TABLE configuration
+    // configurations.push_back({
+    //     700,
+    //     {400, -300, 700, 0, -180, 3.42},  // X1
+    //     {1000, -300, 700, 0, -180, 3.42},   // X2
+    //     {1000, 350, 700, 0, -180, 3.42},   // X3
+    //     {400, 350, 700, 0, -180, 3.42},  // X4
+    //     (700 - 360) / step,               // zdp
+    //     (1000 - 400) / (2 * step),        // xdp
+    //     (350 + 300) / (2 * step)          // ydp
+    //     });
+
+    // Execute gainmove for both configurations
     for (const auto& config : configurations) {
         float X1[6], X2[6], X3[6], X4[6];
         float ztop = config.ztop;
@@ -6314,17 +6570,26 @@ void ControlLoop::GainMove() {
         memcpy(X3, config.check_X3, sizeof(config.check_X3));
         memcpy(X4, config.check_X4, sizeof(config.check_X4));
 
-        for (int i = 0; i < step + 1; ++i) {
+        for (int i = start_height_index; i < total_heights; ++i) {
             X1[2] = ztop - i * config.zdp;
             X2[2] = ztop - i * config.zdp;
             X3[2] = ztop - i * config.zdp;
             X4[2] = ztop - i * config.zdp;
 
             for (int j = 0; j < step; ++j) {
+                std::cout << "Moving X1: " << i + 1 << "th height, " << j + 1 << "th step!" << std::endl;
                 Drfl_.movel(X1, tvel, tacc);
+
+                std::cout << "Moving X2: " << i + 1 << "th height, " << j + 1 << "th step!" << std::endl;
                 Drfl_.movel(X2, tvel, tacc);
+
+                std::cout << "Moving X3: " << i + 1 << "th height, " << j + 1 << "th step!" << std::endl;
                 Drfl_.movel(X3, tvel, tacc);
+
+                std::cout << "Moving X4: " << i + 1 << "th height, " << j + 1 << "th step!" << std::endl;
                 Drfl_.movel(X4, tvel, tacc);
+
+                std::cout << "Returning to X1: " << i + 1 << "th height, " << j + 1 << "th step!" << std::endl;
                 Drfl_.movel(X1, tvel, tacc);
 
                 X1[0] += config.xdp;
@@ -6349,7 +6614,7 @@ void ControlLoop::GainMove() {
         }
     }
 
-    gaincheckloop = true;
+    gaincheckloop.store(true, std::memory_order_release);
     return;
 }
 

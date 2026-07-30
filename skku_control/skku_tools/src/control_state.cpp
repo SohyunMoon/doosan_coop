@@ -18,8 +18,6 @@ namespace SKKU {
     namespace {
         constexpr canid_t SENSOR_ID_1 = 0x01;
         constexpr canid_t SENSOR_ID_2 = 0x02;
-        constexpr canid_t INDEX_ID = 0x102;
-        constexpr uint8_t SENSOR_ID = 0x01;
         constexpr const char* CAN_INTERFACE = "can0";
 
         float decodeForce(uint8_t high, uint8_t low) {
@@ -57,16 +55,7 @@ namespace SKKU {
             return;
         }
 
-        if (!initializeSensor()) {
-            ROS_ERROR("Sensor_data: failed to initialize AFT sensor.");
-            close(can_socket_);
-            can_socket_ = -1;
-            return;
-        }
-
-        usleep(1000000);
-        transmitMode();
-
+        ROS_INFO("Sensor_data: reading AFT sensor frames directly from %s.", CAN_INTERFACE);
         can_running_ = true;
         can_thread_ = std::thread(&Sensor_data::canReadLoop, this);
     }
@@ -193,48 +182,6 @@ namespace SKKU {
         }
 
         return true;
-    }
-
-    bool Sensor_data::initializeSensor() {
-        if (can_socket_ < 0) {
-            return false;
-        }
-
-        struct can_frame frame;
-        std::memset(&frame, 0, sizeof(frame));
-        frame.can_id = INDEX_ID;
-        frame.can_dlc = 8;
-        frame.data[0] = SENSOR_ID;
-        frame.data[1] = 0x02;
-        frame.data[2] = 0x01;
-
-        if (write(can_socket_, &frame, sizeof(struct can_frame)) != sizeof(struct can_frame)) {
-            ROS_ERROR("Sensor_data: initialize command failed: %s", std::strerror(errno));
-            return false;
-        }
-
-        ROS_INFO("Sensor_data: initialize command sent successfully.");
-        return true;
-    }
-
-    void Sensor_data::transmitMode() {
-        if (can_socket_ < 0) {
-            return;
-        }
-
-        struct can_frame frame;
-        std::memset(&frame, 0, sizeof(frame));
-        frame.can_id = INDEX_ID;
-        frame.can_dlc = 8;
-        frame.data[0] = SENSOR_ID;
-        frame.data[1] = 0x03;
-        frame.data[2] = 0x01;
-
-        if (write(can_socket_, &frame, sizeof(struct can_frame)) != sizeof(struct can_frame)) {
-            ROS_ERROR("Sensor_data: transmit mode command failed: %s", std::strerror(errno));
-        } else {
-            ROS_INFO("Sensor_data: transmit mode command sent successfully.");
-        }
     }
 
     void Sensor_data::canReadLoop() {

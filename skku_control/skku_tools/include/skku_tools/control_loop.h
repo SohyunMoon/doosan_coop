@@ -450,7 +450,12 @@ class ControlLoop : protected PBIC{
         Trajectory trajectory;
         float initial_joint_position[NUMBER_OF_JOINT];
         bool exitLoop = false;
-        bool gaincheckloop = false;
+        // true: GainMove + gain logging만 실행하고 PBIC/DBIC 시작 전에 return
+        // false: GainMove를 건너뛰고 기존 impedance controller 실행
+        bool gain_move_enabled_ = false;
+        // GainMove 시작 height (1-based). step=10이면 선택 가능 범위는 1~11.
+        int gain_start_height_ = 10;
+        std::atomic<bool> gaincheckloop{false};
         Torques control_command;
         bool truncate = false;
         TrajectoryGen trajectory_gen_;
@@ -500,11 +505,20 @@ public:
     void adjustSolutionSpace();
 
 private:
+    // When enabled through ~gain_move_enabled, run only the gain scan/logging
+    // and return without starting PBIC/DBIC.
+    bool runGainMoveIfEnabled();
+
     void runPBICGoal(const moveit_msgs::CartesianTrajectory& msg);
     void runPBICPath(const moveit_msgs::CartesianTrajectory& msg);
 
     void runDBICGoal(const moveit_msgs::CartesianTrajectory& msg);
     void runDBICPath(const moveit_msgs::CartesianTrajectory& msg);
+
+// 직전 goal 종료 때 RT 제어를 정지했으면 다음 명령 전에 재시작 0727
+    bool restartRtControlIfNeeded();
+    bool rt_control_needs_restart_ = false;
+//
     //0609
     bool pbic_imp_initialized_ = false;
     //
