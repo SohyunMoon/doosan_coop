@@ -2942,6 +2942,7 @@
 #include <cerrno>
 #include <cstring>
 #include <exception>
+#include <stdexcept>
 #include <fstream>
 #include <thread>
 #include <chrono>
@@ -2978,7 +2979,8 @@ namespace {
     constexpr float DEG2RAD = static_cast<float>(M_PI) / 180.0f;
     constexpr float RAD2DEG = 180.0f / static_cast<float>(M_PI);
 //new0723
-     constexpr double kGoalHoldTimeSec = 3.0;
+     constexpr double kGoalHoldTimeSec = 2.0;
+     constexpr double kWaypointHoldTimeSec = 1.0;
 
     inline Eigen::Quaternionf normalizeQuat(Eigen::Quaternionf q) {
         if (q.norm() < 1e-6f) {
@@ -3548,6 +3550,13 @@ void TrajectoryGen::initDBICGoal(const Eigen::Vector3f& p0_m,
     dbic_mode_ = DBICMode::kGoal;
     dbic_path_samples_.clear();
 
+//waypoint추가로 코드 수정 0730
+    dbic_waypoint_times_.clear();
+    dbic_waypoint_positions_.clear();
+    dbic_waypoint_velocities_.clear();
+    dbic_waypoint_orientations_.clear();
+//
+
     dbic_p0_ = p0_m;
     dbic_q0_ = normalizeQuat(q0);
 
@@ -3588,7 +3597,268 @@ void TrajectoryGen::initDBICGoal(const Eigen::Vector3f& p0_m,
             << std::endl;
 //
 }
+//waypoint 추가로 코드 수정 0730
+void TrajectoryGen::initPBICWaypointGoal(
+    const Eigen::Vector3f& p0_m,
+    const Eigen::Quaternionf& q0,
+    const moveit_msgs::CartesianTrajectory& msg) {
 
+    if (msg.points.size() < 2) {
+        throw std::invalid_argument(
+            "Waypoint goal requires at least two target points.");
+    }
+
+    const double total_time =
+        msg.points.back().time_from_start.toSec();
+
+    // 입력 waypoint 중 마지막 waypoint를 제외한 점에서 1초씩 hold
+    // 예: 입력 waypoint가 4개이면 W1, W2, W3에서 총 3초 hold
+    const size_t intermediate_hold_count =
+        msg.points.size() - 1;
+
+    const double intermediate_hold_total =
+        static_cast<double>(intermediate_hold_count) *
+        kWaypointHoldTimeSec;
+
+    // 중간 waypoint hold + 마지막 waypoint hold
+    const double total_reserved_hold =
+        intermediate_hold_total +
+        kGoalHoldTimeSec;
+
+    if (!std::isfinite(total_time) ||
+        total_time <= total_reserved_hold) {
+
+        throw std::invalid_argument(
+            "Waypoint goal total time must be greater than "
+            "intermediate waypoint holds plus final hold.");
+    }
+    
+    dbic_mode_ = DBICMode::kWaypointGoal;
+    dbic_path_samples_.clear();
+
+    dbic_waypoint_times_.clear();
+    dbic_waypoint_positions_.clear();
+    dbic_waypoint_velocities_.clear();
+    dbic_waypoint_orientations_.clear();
+
+    dbic_T_ = total_time;
+
+    // 실제 현재 위치를 첫 번째 knot로 사용
+    dbic_waypoint_positions_.push_back(p0_m);
+    dbic_waypoint_orientations_.push_back(
+        normalizeQuat(q0));
+
+    // 사용자가 입력한 waypoint 추가
+    for (const auto& point : msg.points) {
+        const double x = point.point.pose.position.x;
+        const double y = point.point.pose.position.y;
+        const double z = point.point.pose.position.z;
+
+        if (!std::isfinite(x) ||
+            !std::isfinite(y) ||
+            !std::isfinite(z)) {
+
+            throw std::invalid_argument(
+                "Waypoint position contains NaN or infinity.");
+        }
+
+        Eigen::Vector3f p;
+        p << static_cast<float>(x) * 1e-3f,
+             static_cast<float>(y) * 1e-3f,
+             static_cast<float>(z) * 1e-3f;
+
+        Eigen::Quaternionf q =
+            dbic_waypoint_orientations_.back();
+
+        const auto& q_msg =
+            point.point.pose.orientation;
+
+        if (!isZeroQuatMsg(q_msg)) {
+            if (!std::isfinite(q_msg.x) ||
+                !std::isfinite(q_msg.y) ||
+                !std::isfinite(q_msg.z) ||
+                !std::isfinite(q_msg.w)) {
+
+                throw std::invalid_argument(
+                    "Waypoint quaternion contains NaN or infinity.");
+            }
+
+            q = quatFromMsg(q_msg);
+            alignQuatHemisphere(
+                q,
+                dbic_waypoint_orientations_.back());
+        }
+
+        dbic_waypoint_positions_.push_back(p);
+        dbic_waypoint_orientations_.push_back(q);
+    }
+
+    const size_t segment_count =
+        dbic_waypoint_positions_.size() - 1;
+
+    std::vector<double> segment_lengths(
+        segment_count, 0.0);
+
+    double total_length = 0.0;
+
+    for (size_t i = 0; i < segment_count; ++i) {
+        segment_lengths[i] =
+            static_cast<double>(
+                (dbic_waypoint_positions_[i + 1] -
+                 dbic_waypoint_positions_[i]).norm());
+
+        if (!std::isfinite(segment_lengths[i]) ||
+            segment_lengths[i] <= 1e-6) {
+
+            throw std::invalid_argument(
+                "Consecutive waypoint positions must not be identical.");
+        }
+
+        total_length += segment_lengths[i];
+    }
+
+    // 전체 명령시간에서 중간 waypoint hold와 마지막 hold를
+    // 모두 제외한 순수 이동시간
+    const double travel_time =
+        dbic_T_ -
+        intermediate_hold_total -
+        kGoalHoldTimeSec;
+
+    if (!std::isfinite(travel_time) ||
+        travel_time <= 0.0) {
+
+        throw std::invalid_argument(
+            "No trajectory travel time remains after hold times.");
+    }
+
+    constexpr double kMinSegmentTimeSec = 0.05;
+
+    // 각 이동 구간의 순수 이동시간
+    std::vector<double> segment_times(
+        segment_count, 0.0);
+
+    for (size_t i = 0; i < segment_count; ++i) {
+        segment_times[i] =
+            travel_time *
+            segment_lengths[i] /
+            total_length;
+
+        if (segment_times[i] < kMinSegmentTimeSec) {
+            throw std::invalid_argument(
+                "A waypoint movement segment is shorter than 0.05 s. "
+                "Increase total time or remove a near-duplicate point.");
+        }
+    }
+
+    // 현재 벡터에는 다음과 같이 원래 waypoint들이 들어 있음
+    // [현재 위치, W1, W2, ..., Wn]
+    const std::vector<Eigen::Vector3f>
+        original_positions =
+            dbic_waypoint_positions_;
+
+    const std::vector<Eigen::Quaternionf>
+        original_orientations =
+            dbic_waypoint_orientations_;
+
+    // 아래에서 이동 구간과 hold 구간을 포함하도록 다시 구성
+    dbic_waypoint_times_.clear();
+    dbic_waypoint_positions_.clear();
+    dbic_waypoint_orientations_.clear();
+    dbic_waypoint_velocities_.clear();
+
+    // 최종 knot 개수:
+    // 시작점 1개 + 각 waypoint 도착점 + 중간 waypoint 반복점
+    const size_t expanded_knot_count =
+        1 +
+        segment_count +
+        intermediate_hold_count;
+
+    dbic_waypoint_times_.reserve(
+        expanded_knot_count);
+
+    dbic_waypoint_positions_.reserve(
+        expanded_knot_count);
+
+    dbic_waypoint_orientations_.reserve(
+        expanded_knot_count);
+
+    // 실제 현재 위치를 t=0의 시작점으로 추가
+    dbic_waypoint_times_.push_back(0.0);
+
+    dbic_waypoint_positions_.push_back(
+        original_positions.front());
+
+    dbic_waypoint_orientations_.push_back(
+        original_orientations.front());
+
+    double timeline = 0.0;
+
+    for (size_t i = 0; i < segment_count; ++i) {
+        // ----------------------------------------------------------
+        // 현재 점에서 다음 waypoint까지 이동
+        // ----------------------------------------------------------
+        timeline += segment_times[i];
+
+        dbic_waypoint_times_.push_back(
+            timeline);
+
+        dbic_waypoint_positions_.push_back(
+            original_positions[i + 1]);
+
+        dbic_waypoint_orientations_.push_back(
+            original_orientations[i + 1]);
+
+        // ----------------------------------------------------------
+        // 마지막 waypoint가 아니면 동일 pose를 1초 뒤에 한 번 더 추가
+        //
+        // 같은 pose가 서로 다른 두 시간에 들어가기 때문에
+        // 그 사이가 정확히 hold trajectory가 됨
+        // ----------------------------------------------------------
+        const bool is_intermediate_waypoint =
+            (i + 1 < segment_count);
+
+        if (is_intermediate_waypoint) {
+            timeline += kWaypointHoldTimeSec;
+
+            dbic_waypoint_times_.push_back(
+                timeline);
+
+            dbic_waypoint_positions_.push_back(
+                original_positions[i + 1]);
+
+            dbic_waypoint_orientations_.push_back(
+                original_orientations[i + 1]);
+        }
+    }
+
+    // 누적 부동소수점 오차 방지
+    // 마지막 3초 hold가 시작되는 시간을 정확히 맞춤
+    dbic_waypoint_times_.back() =
+        dbic_T_ - kGoalHoldTimeSec;
+
+    // 모든 이동 구간의 시작과 끝 속도를 0으로 설정
+    // 중간 waypoint 도착 시 정지하고,
+    // 1초 hold한 다음 정지 상태에서 다시 출발
+    dbic_waypoint_velocities_.assign(
+        dbic_waypoint_positions_.size(),
+        Eigen::Vector3f::Zero());
+
+    std::cout
+        << "[PBIC WAYPOINT INIT] points="
+        << msg.points.size()
+        << " requested_T=" << dbic_T_
+        << " travel_T=" << travel_time
+        << " waypoint_hold_count="
+        << intermediate_hold_count
+        << " waypoint_hold_each_T="
+        << kWaypointHoldTimeSec
+        << " waypoint_hold_total_T="
+        << intermediate_hold_total
+        << " final_hold_T="
+        << kGoalHoldTimeSec
+        << std::endl;
+}
+//
 TaskRef TrajectoryGen::sampleDBICGoal(double t_sec, double dt_sec) const {
     auto clamp01 = [](double x) {
         return std::max(0.0, std::min(1.0, x));
@@ -3655,7 +3925,281 @@ TaskRef TrajectoryGen::sampleDBICGoal(double t_sec, double dt_sec) const {
 
     return ref;
 }
+//waypoint 추가로 코드 수정 0730
+TaskRef TrajectoryGen::samplePBICWaypointGoal(
+    double t_sec,
+    double dt_sec) const {
 
+    TaskRef ref;
+
+    if (dbic_waypoint_times_.size() < 2 ||
+        dbic_waypoint_positions_.size() !=
+            dbic_waypoint_times_.size() ||
+        dbic_waypoint_velocities_.size() !=
+            dbic_waypoint_times_.size() ||
+        dbic_waypoint_orientations_.size() !=
+            dbic_waypoint_times_.size()) {
+
+        ref.motion_finished = true;
+        return ref;
+    }
+
+    const double move_time =
+        dbic_waypoint_times_.back();
+
+    const double t =
+        std::max(
+            0.0,
+            std::min(t_sec, move_time));
+
+    const double safe_dt =
+        std::max(1e-6, dt_sec);
+
+    // 이동 종료 후 마지막 위치에서 hold
+    if (t_sec >= move_time) {
+        ref.p_d =
+            dbic_waypoint_positions_.back();
+
+        ref.q_d =
+            dbic_waypoint_orientations_.back();
+
+        ref.v_d.setZero();
+        ref.a_d.setZero();
+        ref.w_d.setZero();
+        ref.alpha_d.setZero();
+
+        // 전체 명령시간을 넘었을 때만 종료
+        ref.motion_finished =
+            (t_sec > dbic_T_);
+
+        return ref;
+    }
+
+    auto segmentIndex =
+        [&](double query_time) -> size_t {
+
+        const auto it =
+            std::upper_bound(
+                dbic_waypoint_times_.begin(),
+                dbic_waypoint_times_.end(),
+                query_time);
+
+        size_t index = 0;
+
+        if (it != dbic_waypoint_times_.begin()) {
+            index =
+                static_cast<size_t>(
+                    (it -
+                     dbic_waypoint_times_.begin()) -
+                    1);
+        }
+
+        return std::min(
+            index,
+            dbic_waypoint_times_.size() - 2);
+    };
+
+    const size_t k = segmentIndex(t);
+
+    const double segment_time =
+        dbic_waypoint_times_[k + 1] -
+        dbic_waypoint_times_[k];
+
+    const double u =
+        std::max(
+            0.0,
+            std::min(
+                1.0,
+                (t - dbic_waypoint_times_[k]) /
+                segment_time));
+
+    const double u2 = u * u;
+    const double u3 = u2 * u;
+    const double u4 = u3 * u;
+    const double u5 = u4 * u;
+
+    // 5차 Hermite basis
+    // 양 끝 가속도는 0
+    const double h00 =
+        1.0 - 10.0*u3 + 15.0*u4 - 6.0*u5;
+
+    const double h10 =
+        u - 6.0*u3 + 8.0*u4 - 3.0*u5;
+
+    const double h01 =
+        10.0*u3 - 15.0*u4 + 6.0*u5;
+
+    const double h11 =
+        -4.0*u3 + 7.0*u4 - 3.0*u5;
+
+    const double dh00 =
+        -30.0*u2 + 60.0*u3 - 30.0*u4;
+
+    const double dh10 =
+        1.0 - 18.0*u2 + 32.0*u3 - 15.0*u4;
+
+    const double dh01 =
+        30.0*u2 - 60.0*u3 + 30.0*u4;
+
+    const double dh11 =
+        -12.0*u2 + 28.0*u3 - 15.0*u4;
+
+    const double ddh00 =
+        -60.0*u + 180.0*u2 - 120.0*u3;
+
+    const double ddh10 =
+        -36.0*u + 96.0*u2 - 60.0*u3;
+
+    const double ddh01 =
+        60.0*u - 180.0*u2 + 120.0*u3;
+
+    const double ddh11 =
+        -24.0*u + 84.0*u2 - 60.0*u3;
+
+    const Eigen::Vector3f& p0 =
+        dbic_waypoint_positions_[k];
+
+    const Eigen::Vector3f& p1 =
+        dbic_waypoint_positions_[k + 1];
+
+    const Eigen::Vector3f& v0 =
+        dbic_waypoint_velocities_[k];
+
+    const Eigen::Vector3f& v1 =
+        dbic_waypoint_velocities_[k + 1];
+
+    ref.p_d =
+        p0 * static_cast<float>(h00) +
+        v0 * static_cast<float>(
+            h10 * segment_time) +
+        p1 * static_cast<float>(h01) +
+        v1 * static_cast<float>(
+            h11 * segment_time);
+
+    ref.v_d =
+        p0 * static_cast<float>(
+            dh00 / segment_time) +
+        v0 * static_cast<float>(dh10) +
+        p1 * static_cast<float>(
+            dh01 / segment_time) +
+        v1 * static_cast<float>(dh11);
+
+    ref.a_d =
+        p0 * static_cast<float>(
+            ddh00 /
+            (segment_time * segment_time)) +
+        v0 * static_cast<float>(
+            ddh10 / segment_time) +
+        p1 * static_cast<float>(
+            ddh01 /
+            (segment_time * segment_time)) +
+        v1 * static_cast<float>(
+            ddh11 / segment_time);
+
+    auto sampleOrientation =
+        [&](double query_time) {
+
+        if (query_time <= 0.0) {
+            return
+                dbic_waypoint_orientations_.front();
+        }
+
+        if (query_time >= move_time) {
+            return
+                dbic_waypoint_orientations_.back();
+        }
+
+        const size_t qi =
+            segmentIndex(query_time);
+
+        const double q_segment_time =
+            dbic_waypoint_times_[qi + 1] -
+            dbic_waypoint_times_[qi];
+
+        const double qu =
+            std::max(
+                0.0,
+                std::min(
+                    1.0,
+                    (query_time -
+                     dbic_waypoint_times_[qi]) /
+                    q_segment_time));
+
+        const double qu2 = qu * qu;
+        const double qu3 = qu2 * qu;
+        const double qu4 = qu3 * qu;
+        const double qu5 = qu4 * qu;
+
+        const double s =
+            10.0*qu3 -
+            15.0*qu4 +
+            6.0*qu5;
+
+        Eigen::Quaternionf q =
+            dbic_waypoint_orientations_[qi]
+                .slerp(
+                    static_cast<float>(s),
+                    dbic_waypoint_orientations_[qi + 1]);
+
+        q.normalize();
+        return q;
+    };
+
+    const Eigen::Quaternionf q_m =
+        sampleOrientation(
+            std::max(0.0, t - safe_dt));
+
+    const Eigen::Quaternionf q_0 =
+        sampleOrientation(t);
+
+    const Eigen::Quaternionf q_p =
+        sampleOrientation(
+            std::min(
+                move_time,
+                t + safe_dt));
+
+    ref.q_d = q_0;
+
+    Eigen::Quaternionf dq_p =
+        q_0.conjugate() * q_p;
+
+    Eigen::Quaternionf dq_m =
+        q_m.conjugate() * q_0;
+
+    if (dq_p.w() < 0.0f) {
+        dq_p.coeffs() *= -1.0f;
+    }
+
+    if (dq_m.w() < 0.0f) {
+        dq_m.coeffs() *= -1.0f;
+    }
+
+    const Eigen::Vector3f w_p =
+        quatLog(dq_p) /
+        static_cast<float>(safe_dt);
+
+    const Eigen::Vector3f w_m =
+        quatLog(dq_m) /
+        static_cast<float>(safe_dt);
+
+    ref.w_d =
+        0.5f * (w_p + w_m);
+
+    ref.alpha_d =
+        (w_p - w_m) /
+        static_cast<float>(safe_dt);
+
+    if (t <= 0.0) {
+        ref.w_d.setZero();
+        ref.alpha_d.setZero();
+    }
+
+    ref.motion_finished =
+        (t_sec > dbic_T_);
+
+    return ref;
+}
+//
 void TrajectoryGen::initDBICPath(const Eigen::Vector3f& p0_m,
                                  const Eigen::Quaternionf& q0,
                                  const moveit_msgs::CartesianTrajectory& msg,
@@ -3822,7 +4366,7 @@ ImpedanceControlLoop::ImpedanceControlLoop(moveit_msgs::CartesianTrajectory msg,
                                            DRAFramework::CDRFLEx& Drfl)
     : ControlLoop(msg, loop_time, realtimeconfig, Drfl)
 {
-    // 현재 실험은 DBIC
+    // 현재 실험은 DBICs\
     // setImpedanceImplMode(ImpedanceImplMode::kDBIC);
     setImpedanceImplMode(ImpedanceImplMode::kPBIC_TDC);
 
@@ -4444,8 +4988,29 @@ void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& m
         pbic_start_p_m = imp.p_m * 1e-3f;  // mm -> m
         pbic_start_q = imp.q_m;
     }
+//waypoint 추가로 인한 코드 수정 0730
+    // trajectory_gen_.initDBICGoal(pbic_start_p_m, pbic_start_q, msg);
+    try {
+        if (msg.points.size() == 1) {
+            trajectory_gen_.initDBICGoal(
+                pbic_start_p_m,
+                pbic_start_q,
+                msg);
+        } else {
+            trajectory_gen_.initPBICWaypointGoal(
+                pbic_start_p_m,
+                pbic_start_q,
+                msg);
+        }
+    } catch (const std::exception& e) {
+        ROS_ERROR_STREAM(
+            "PBIC trajectory initialization failed: "
+            << e.what());
 
-    trajectory_gen_.initDBICGoal(pbic_start_p_m, pbic_start_q, msg);
+        fail = 2;
+        return;
+    }
+//
     pbic_imp_initialized_ = true;
 
     if (!isDirectoryCreated || dataDirectory.empty()) {
@@ -4682,11 +5247,34 @@ void ImpedanceControlLoop::runPBICGoal(const moveit_msgs::CartesianTrajectory& m
     TaskState final_state =
         getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
 
-    TaskRef final_tcp =
-        trajectory_gen_.sampleDBICGoal(
-            msg.points[0].time_from_start.toSec(),
-            static_cast<double>(loop_time_) * 1e-3);
+//waypoint 추가로 인한 코드 수정 0730
+    // TaskRef final_tcp =
+    //     trajectory_gen_.sampleDBICGoal(
+    //         msg.points[0].time_from_start.toSec(),
+    //         static_cast<double>(loop_time_) * 1e-3);
 
+    const double final_t =
+        msg.points.back().time_from_start.toSec();
+
+    const double final_dt =
+        static_cast<double>(loop_time_) * 1e-3;
+
+    TaskRef final_tcp;
+
+    if (trajectory_gen_.dbic_mode_ ==
+        TrajectoryGen::DBICMode::kGoal) {
+
+        final_tcp =
+            trajectory_gen_.sampleDBICGoal(
+                final_t,
+                final_dt);
+    } else {
+        final_tcp =
+            trajectory_gen_.samplePBICWaypointGoal(
+                final_t,
+                final_dt);
+    }
+//
     TaskRef final_task = convertRefToTaskPoint(final_tcp);
 
     const float distance_mm = 1000.0f * (final_state.p - final_task.p_d).norm();
@@ -5332,16 +5920,41 @@ bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state,
     // 그 ref_task를 legacy PBIC MotionGenerator가 먹을 수 있는
     // trajectory 구조체(mm + quaternion pose, translation vel/acc only)로 변환한다.
     // ------------------------------------------------------------------
+//waypoint추가로 인한 코드 수정 0730
+    // const bool use_dbic_nominal_for_pbic_goal =
+    //     (control_mode_ == "PBIC goal mode") &&
+    //     (trajectory_gen_.dbic_mode_ == TrajectoryGen::DBICMode::kGoal);
     const bool use_dbic_nominal_for_pbic_goal =
         (control_mode_ == "PBIC goal mode") &&
-        (trajectory_gen_.dbic_mode_ == TrajectoryGen::DBICMode::kGoal);
+        (trajectory_gen_.dbic_mode_ ==
+             TrajectoryGen::DBICMode::kGoal ||
+         trajectory_gen_.dbic_mode_ ==
+             TrajectoryGen::DBICMode::kWaypointGoal);
+//
 
     if (use_dbic_nominal_for_pbic_goal) {
         const double t_sec  = g_pbic_goal_elapsed_sec;   // wall-clock 기준
         const double dt_sec = static_cast<double>(loop_time_) * 1e-3;
+//waypoint 추가로 인한 코드 수정 0730
+        // TaskRef ref_tcp  = trajectory_gen_.sampleDBICGoal(t_sec, dt_sec);
+        // TaskRef ref_task = convertRefToTaskPoint(ref_tcp);
+        TaskRef ref_tcp;
 
-        TaskRef ref_tcp  = trajectory_gen_.sampleDBICGoal(t_sec, dt_sec);
-        TaskRef ref_task = convertRefToTaskPoint(ref_tcp);
+        if (trajectory_gen_.dbic_mode_ ==
+            TrajectoryGen::DBICMode::kGoal) {
+
+            ref_tcp =
+                trajectory_gen_.sampleDBICGoal(
+                    t_sec, dt_sec);
+        } else {
+            ref_tcp =
+                trajectory_gen_.samplePBICWaypointGoal(
+                    t_sec, dt_sec);
+        }
+
+        TaskRef ref_task =
+            convertRefToTaskPoint(ref_tcp);
+//
 
         // --------------------------------------------------------------
         // MotionGenerator() / dataSaving()가 기대하는 legacy trajectory format

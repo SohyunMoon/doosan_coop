@@ -555,7 +555,7 @@ namespace SKKU
 
         M_gains = {imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000};
         // K_gains = {3*imp_k, 3*imp_k, imp_k, imp_k, imp_k, imp_k};
-        K_gains = {0.5f*imp_k, 1.0f*imp_k, 2.0f*imp_k, 50.0f * imp_k, 75.0f * imp_k, 50.0f * imp_k};
+        K_gains = {1.0f*imp_k, 1.0f*imp_k, 0.3f*imp_k, 50.0f * imp_k, 75.0f * imp_k, 50.0f * imp_k};
         for (int i = 0; i < 3; ++i)
         {
             // B_gains[i] = 2 * sqrt(K_gains[i] * M_gains[i]); // 2 critical dmaped
@@ -1541,7 +1541,9 @@ namespace SKKU
             }
 
         }
-
+        // 현재 filtered derivative를 다음 제어주기의 이전 값으로 저장
+        prev.derrPrev = derr;
+        
         error.e = err;
         error.de = derr;
         error.e_integral = err_integral;

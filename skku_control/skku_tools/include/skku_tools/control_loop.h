@@ -302,10 +302,32 @@ class TrajectoryGen{
             float vel[7] = {0.0,};
             float acc[7] = {0.0,};
         };
+//waypoint 때문에 수정 0730
         // ---------------- DBIC 전용 trajectory sampler ----------------
+        // enum class DBICMode {
+        //     kNone,
+        //     kGoal,
+        //     kPath
+        // };
+
+        // void initDBICGoal(const Eigen::Vector3f& p0_m,
+        //                   const Eigen::Quaternionf& q0,
+        //                   const moveit_msgs::CartesianTrajectory& msg);
+
+        // void initDBICPath(const Eigen::Vector3f& p0_m,
+        //                   const Eigen::Quaternionf& q0,
+        //                   const moveit_msgs::CartesianTrajectory& msg,
+        //                   double dt_sec);
+
+        // TaskRef sampleDBICGoal(double t_sec, double dt_sec) const;
+        // TaskRef sampleDBICPath(size_t idx) const;
+
+        // DBICMode dbic_mode_ = DBICMode::kNone;
+        // std::vector<TaskRef> dbic_path_samples_;        
         enum class DBICMode {
             kNone,
             kGoal,
+            kWaypointGoal,
             kPath
         };
 
@@ -313,16 +335,29 @@ class TrajectoryGen{
                           const Eigen::Quaternionf& q0,
                           const moveit_msgs::CartesianTrajectory& msg);
 
+        void initPBICWaypointGoal(
+            const Eigen::Vector3f& p0_m,
+            const Eigen::Quaternionf& q0,
+            const moveit_msgs::CartesianTrajectory& msg);
+
         void initDBICPath(const Eigen::Vector3f& p0_m,
                           const Eigen::Quaternionf& q0,
                           const moveit_msgs::CartesianTrajectory& msg,
                           double dt_sec);
 
-        TaskRef sampleDBICGoal(double t_sec, double dt_sec) const;
+        TaskRef sampleDBICGoal(
+            double t_sec,
+            double dt_sec) const;
+
+        TaskRef samplePBICWaypointGoal(
+            double t_sec,
+            double dt_sec) const;
+
         TaskRef sampleDBICPath(size_t idx) const;
 
         DBICMode dbic_mode_ = DBICMode::kNone;
-        std::vector<TaskRef> dbic_path_samples_;        
+        std::vector<TaskRef> dbic_path_samples_;
+//
 
         void TrajectoryPlan(PlanParam* plan);
         void TrajectoryGenerator(PlanParam* plan, TraParam* tra);
@@ -350,7 +385,12 @@ class TrajectoryGen{
         Eigen::Quaternionf dbic_q0_ = Eigen::Quaternionf::Identity();
         Eigen::Quaternionf dbic_qf_ = Eigen::Quaternionf::Identity();
         double dbic_T_ = 0.0;    
-   
+//waypoint 때문에 수정 0730
+        std::vector<double> dbic_waypoint_times_;
+        std::vector<Eigen::Vector3f> dbic_waypoint_positions_;
+        std::vector<Eigen::Vector3f> dbic_waypoint_velocities_;
+        std::vector<Eigen::Quaternionf> dbic_waypoint_orientations_;
+//
 };
 
 class ControlLoop : protected PBIC{
