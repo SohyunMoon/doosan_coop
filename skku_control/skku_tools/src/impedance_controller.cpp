@@ -555,17 +555,19 @@ namespace SKKU
 
         M_gains = {imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000};
         // K_gains = {3*imp_k, 3*imp_k, imp_k, imp_k, imp_k, imp_k};
-        K_gains = {1.0f*imp_k, 1.0f*imp_k, 0.3f*imp_k, 50.0f * imp_k, 75.0f * imp_k, 50.0f * imp_k};
-        for (int i = 0; i < 3; ++i)
+        K_gains = {5.0f*imp_k, 5.0f*imp_k, 1.0f*imp_k, 8.0f * imp_k, 8.0f * imp_k, 10.0f * imp_k};
+
+        // Axis order: X, Y, Z, Rx, Ry, Rz.
+        // B = 2 * zeta * sqrt(K * M), where zeta = 1 is critical damping.
+        const std::array<float, 6> damping_ratios = {
+            8.0f, 8.0f, 8.0f, 8.0f, 8.0f, 8.0f
+        };
+
+        for (int i = 0; i < 6; ++i)
         {
-            // B_gains[i] = 2 * sqrt(K_gains[i] * M_gains[i]); // 2 critical dmaped
-            B_gains[i] = 8 * sqrt(K_gains[i] * M_gains[i]); // 4 Overdmaped
-            
-            // B_gains[i] = 0.5 * sqrt(K_gains[i] * M_gains[i]); // 2 Underdmaped
+            B_gains[i] = 2.0f * damping_ratios[i]
+                * std::sqrt(K_gains[i] * M_gains[i]);
         }
-        B_gains[3] = 16 * sqrt(K_gains[3] * M_gains[3]);
-        B_gains[4] = 16 * sqrt(K_gains[4] * M_gains[4]);
-        B_gains[5] = 16 * sqrt(K_gains[5] * M_gains[5]);
     }
 
 
@@ -2233,9 +2235,8 @@ namespace SKKU
         Fext_raw = Fft_raw;
 
 // 0729 PBIC 외력 1차 LPF
-
         // 0729 matched Ty 부호 반전
-        Fext_raw(4) = -Fext_raw(4);
+        Fext_raw(4) = Fext_raw(4);
 
         constexpr float kPi = 3.14159265358979323846f;
         constexpr float kFextCutoffHz = 5.0f;
@@ -2252,7 +2253,9 @@ namespace SKKU
         }
 
         F_ext = Fext_filt;
-
+        F_ext[3] = 0.0;
+        F_ext[4] = 0.0;
+        F_ext[5] = 0.0;
         // F_ext = Fext_raw;
 //
         //FT센서사용으로 비활성화
