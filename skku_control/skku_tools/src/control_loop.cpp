@@ -3640,13 +3640,17 @@ void TrajectoryGen::initPBICWaypointGoal(
     dbic_waypoint_positions_.clear();
     dbic_waypoint_velocities_.clear();
     dbic_waypoint_orientations_.clear();
+    dbic_waypoint_draw_modes_.clear();
 
     dbic_T_ = total_time;
 
-    // 실제 현재 위치를 첫 번째 knot로 사용
+    // 실제 현재 위치를 첫 번째 knot로 사용.
+    // 현재 위치 -> 첫 waypoint 구간은 접근 구간이므로 항상 위치정렬로 둔다.
+    // (자유공간에서 Z 보정이 접촉을 찾겠다고 내리꽂는 것을 막는다)
     dbic_waypoint_positions_.push_back(p0_m);
     dbic_waypoint_orientations_.push_back(
         normalizeQuat(q0));
+    dbic_waypoint_draw_modes_.push_back(false);
 
     // 사용자가 입력한 waypoint 추가
     for (const auto& point : msg.points) {
@@ -3689,8 +3693,31 @@ void TrajectoryGen::initPBICWaypointGoal(
                 dbic_waypoint_orientations_.back());
         }
 
+        // 0804 goal generator가 point.velocity.linear.z로 보내는 구간 모드.
+        // 1.0 = 그리기, 0.0 = 위치정렬.
+        // 이 필드를 안 채우고 보내는 구 클라이언트는 전부 0이 되어버리므로,
+        // 메시지 전체가 0이면 모드 정보가 없는 것으로 보고 전부 그리기로 둔다.
+        const bool draw_mode =
+            (point.point.velocity.linear.z > 0.5);
+
         dbic_waypoint_positions_.push_back(p);
         dbic_waypoint_orientations_.push_back(q);
+        dbic_waypoint_draw_modes_.push_back(draw_mode);
+    }
+
+    // 모드 정보가 전혀 없는 메시지(구 클라이언트)는 전 구간 그리기로 처리
+    const bool any_draw_flag =
+        std::any_of(dbic_waypoint_draw_modes_.begin(),
+                    dbic_waypoint_draw_modes_.end(),
+                    [](bool v) { return v; });
+
+    if (!any_draw_flag) {
+        ROS_WARN("[PBIC WAYPOINT] 구간 모드 정보가 없습니다 "
+                 "(point.velocity.linear.z 전부 0). 전 구간을 그리기로 처리합니다.");
+
+        std::fill(dbic_waypoint_draw_modes_.begin(),
+                  dbic_waypoint_draw_modes_.end(), true);
+        // 접근 구간(첫 이동 구간)은 아래 확장 루프에서 항상 위치정렬로 덮어쓴다.
     }
 
     const size_t segment_count =
@@ -3760,11 +3787,16 @@ void TrajectoryGen::initPBICWaypointGoal(
         original_orientations =
             dbic_waypoint_orientations_;
 
+    const std::vector<bool>
+        original_draw_modes =
+            dbic_waypoint_draw_modes_;
+
     // 아래에서 이동 구간과 hold 구간을 포함하도록 다시 구성
     dbic_waypoint_times_.clear();
     dbic_waypoint_positions_.clear();
     dbic_waypoint_orientations_.clear();
     dbic_waypoint_velocities_.clear();
+    dbic_waypoint_draw_modes_.clear();
 
     // 최종 knot 개수:
     // 시작점 1개 + 각 waypoint 도착점 + 중간 waypoint 반복점
@@ -3791,6 +3823,10 @@ void TrajectoryGen::initPBICWaypointGoal(
     dbic_waypoint_orientations_.push_back(
         original_orientations.front());
 
+    // 시작 knot의 모드는 읽히지 않지만(구간 모드는 도착 knot에서 읽음)
+    // 배열 길이를 positions와 맞춘다.
+    dbic_waypoint_draw_modes_.push_back(false);
+
     double timeline = 0.0;
 
     for (size_t i = 0; i < segment_count; ++i) {
@@ -3807,6 +3843,12 @@ void TrajectoryGen::initPBICWaypointGoal(
 
         dbic_waypoint_orientations_.push_back(
             original_orientations[i + 1]);
+
+        // 이 이동 구간의 모드. 첫 구간(현재 위치 -> 첫 waypoint)은
+        // 접근 구간이므로 무조건 위치정렬로 둔다.
+        dbic_waypoint_draw_modes_.push_back(
+            (i == 0) ? false
+                     : static_cast<bool>(original_draw_modes[i + 1]));
 
         // ----------------------------------------------------------
         // 마지막 waypoint가 아니면 동일 pose를 1초 뒤에 한 번 더 추가
@@ -3828,6 +3870,21 @@ void TrajectoryGen::initPBICWaypointGoal(
 
             dbic_waypoint_orientations_.push_back(
                 original_orientations[i + 1]);
+
+            // hold 구간은 XY가 멈춰 있는 구간이므로,
+            // "다음에 할 일"의 모드를 미리 적용한다.
+            //
+            // 리프트로 이동해서 내려온 직후(TRAVEL) hold가 DRAW가 되면,
+            // 제자리에서 1초 동안 Z를 내려 접촉을 잡은 뒤에 획이 시작된다.
+            // 접근 구간 끝의 hold도 마찬가지로 첫 획 전에 접촉을 만든다.
+            // XY가 정지 상태라 아래로 탐색해도 원치 않는 선이 그려지지 않는다.
+            const bool has_next_segment =
+                (i + 2 < original_draw_modes.size());
+
+            dbic_waypoint_draw_modes_.push_back(
+                has_next_segment
+                    ? static_cast<bool>(original_draw_modes[i + 2])
+                    : dbic_waypoint_draw_modes_.back());
         }
     }
 
@@ -3857,6 +3914,21 @@ void TrajectoryGen::initPBICWaypointGoal(
         << " final_hold_T="
         << kGoalHoldTimeSec
         << std::endl;
+
+    // 0804 구간 모드가 확장된 knot 배열과 맞는지 눈으로 확인할 수 있게 찍는다.
+    // 구간 k는 knot k -> k+1 이고, 그 구간의 모드는 도착 knot k+1에서 읽는다.
+    std::cout << "[PBIC WAYPOINT MODE]" << std::endl;
+    for (size_t k = 0; k + 1 < dbic_waypoint_positions_.size(); ++k) {
+        std::cout
+            << "  seg " << k
+            << "  t=" << dbic_waypoint_times_[k]
+            << "~" << dbic_waypoint_times_[k + 1]
+            << "  z=" << dbic_waypoint_positions_[k](2) * 1000.0f
+            << "->" << dbic_waypoint_positions_[k + 1](2) * 1000.0f
+            << " mm  "
+            << (dbic_waypoint_draw_modes_[k + 1] ? "DRAW" : "TRAVEL")
+            << std::endl;
+    }
 }
 //
 TaskRef TrajectoryGen::sampleDBICGoal(double t_sec, double dt_sec) const {
@@ -3968,6 +4040,12 @@ TaskRef TrajectoryGen::samplePBICWaypointGoal(
         ref.w_d.setZero();
         ref.alpha_d.setZero();
 
+        // 마지막 hold 구간은 마지막 waypoint의 모드를 유지한다
+        ref.draw_mode =
+            dbic_waypoint_draw_modes_.empty()
+                ? true
+                : dbic_waypoint_draw_modes_.back();
+
         // 전체 명령시간을 넘었을 때만 종료
         ref.motion_finished =
             (t_sec > dbic_T_);
@@ -4000,6 +4078,12 @@ TaskRef TrajectoryGen::samplePBICWaypointGoal(
     };
 
     const size_t k = segmentIndex(t);
+
+    // 0804 구간 k는 waypoint k -> k+1 이므로, 도착점 k+1의 모드가 이 구간의 모드다.
+    ref.draw_mode =
+        (k + 1 < dbic_waypoint_draw_modes_.size())
+            ? dbic_waypoint_draw_modes_[k + 1]
+            : true;
 
     const double segment_time =
         dbic_waypoint_times_[k + 1] -
@@ -5970,6 +6054,9 @@ bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state,
         trajectory.pos_d[5] = ref_task.q_d.z();
         trajectory.pos_d[6] = ref_task.q_d.w();
 
+        // 0804 그리기/위치정렬 구간 -> MotionGenerator의 Fz 보정 게이팅
+        trajectory.draw_mode = ref_task.draw_mode;
+
         trajectory.vel_d[0] = ref_task.v_d(0) * 1000.0f;
         trajectory.vel_d[1] = ref_task.v_d(1) * 1000.0f;
         trajectory.vel_d[2] = ref_task.v_d(2) * 1000.0f;
@@ -6901,6 +6988,9 @@ void ControlLoop::dataSaving() {
         //new0324
         pbic_ik_jump[0] = pbic_ik_jump_log;
         logData("pbic_ik_jump.txt", pbic_ik_jump, 1);
+        // 0804 [dz(mm), dz_dot(mm/s), |Fz|_filt(N), force error(N),
+        //       nominal z ref(mm), adapted z ref(mm)]
+        logData("pbic_fz_adapt.txt", pbic_fz_adapt_log_, 6);
         logData("qdot_des.txt", qdot_des_log, 6);
         logData("imp_task_pose.txt", imp_task_pose_log, 6);
         logData("imp_task_vel.txt", imp_task_vel_log, 6);

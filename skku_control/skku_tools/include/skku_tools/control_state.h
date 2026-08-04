@@ -234,6 +234,9 @@ public:
     // quaternion-based rotational motion
     std::array<float, 3> w_d = {0.0f, 0.0f, 0.0f};        // [rad/s]
     std::array<float, 3> alpha_d = {0.0f, 0.0f, 0.0f};    // [rad/s^2]
+
+    // 0804 그리기 구간 여부. false면 접촉력 기반 Z 보정을 멈춘다.
+    bool draw_mode = true;
 };
 
 class Total_trajectory {
@@ -289,6 +292,10 @@ struct TaskRef {
     Eigen::Vector3f alpha_d = Eigen::Vector3f::Zero();    // [rad/s^2]
 
     bool motion_finished = false;
+
+    // 0804 현재 구간이 그리기 구간인가.
+    // false면 위치정렬 구간이라 접촉력 기반 Z reference 보정을 멈춘다.
+    bool draw_mode = true;
 };
 
 struct TaskState {

@@ -553,21 +553,70 @@ namespace SKKU
         imp_m = config["imp_m"].as<float>();
         imp_k = config["imp_k"].as<float>();
 
-        M_gains = {imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000, imp_m / 1000};
-        // K_gains = {3*imp_k, 3*imp_k, imp_k, imp_k, imp_k, imp_k};
-        K_gains = {5.0f*imp_k, 5.0f*imp_k, 1.0f*imp_k, 8.0f * imp_k, 8.0f * imp_k, 10.0f * imp_k};
+        // yaml에 키가 없으면 기존 하드코딩 값을 그대로 쓴다 (구 config 호환)
+        auto loadOptFloat = [&config](const char* key, float& dst) {
+            if (config[key]) dst = config[key].as<float>();
+        };
+        auto loadOptArray6 = [&config](const char* key, std::array<float, 6>& dst) {
+            if (config[key]) dst = config[key].as<std::array<float, 6>>();
+        };
 
         // Axis order: X, Y, Z, Rx, Ry, Rz.
-        // B = 2 * zeta * sqrt(K * M), where zeta = 1 is critical damping.
-        const std::array<float, 6> damping_ratios = {
-            8.0f, 8.0f, 8.0f, 8.0f, 8.0f, 8.0f
-        };
+        // K_gains[i] = imp_k_scale[i] * imp_k
+        // M_gains[i] = imp_m_scale[i] * imp_m / 1000
+        // B_gains[i] = 2 * zeta[i] * sqrt(K*M)   (zeta = 1이 임계감쇠)
+        std::array<float, 6> imp_k_scale =
+            {5.0f, 5.0f, 1.0f, 8.0f, 8.0f, 10.0f};
+        std::array<float, 6> imp_m_scale =
+            {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+        std::array<float, 6> damping_ratios =
+            {8.0f, 8.0f, 8.0f, 8.0f, 8.0f, 8.0f};
+
+        loadOptArray6("imp_k_scale", imp_k_scale);
+        loadOptArray6("imp_m_scale", imp_m_scale);
+        loadOptArray6("imp_damping_ratio", damping_ratios);
 
         for (int i = 0; i < 6; ++i)
         {
+            K_gains[i] = imp_k_scale[i] * imp_k;
+            M_gains[i] = imp_m_scale[i] * imp_m / 1000.0f;
             B_gains[i] = 2.0f * damping_ratios[i]
                 * std::sqrt(K_gains[i] * M_gains[i]);
         }
+
+        std::cout << "[PBIC Impedance] K=[";
+        for (int i = 0; i < 6; ++i) std::cout << K_gains[i] << (i < 5 ? ", " : "]");
+        std::cout << " M=[";
+        for (int i = 0; i < 6; ++i) std::cout << M_gains[i] << (i < 5 ? ", " : "]");
+        std::cout << " zeta=[";
+        for (int i = 0; i < 6; ++i) std::cout << damping_ratios[i] << (i < 5 ? ", " : "]");
+        std::cout << std::endl;
+
+        // 0804 Fz adaptive z-reference shaping
+
+        if (config["fz_adapt_enable"]) {
+            fz_adapt_enable_ = config["fz_adapt_enable"].as<bool>();
+        }
+        loadOptFloat("fz_target", fz_target_);
+        loadOptFloat("fz_kp", fz_kp_);
+        loadOptFloat("fz_ki", fz_ki_);
+        loadOptFloat("fz_kd", fz_kd_);
+        // 구 키 이름 호환: fz_adapt_gain은 적분 게인이었다
+        loadOptFloat("fz_adapt_gain", fz_ki_);
+        loadOptFloat("fz_adapt_rate", fz_adapt_rate_);
+        loadOptFloat("fz_adapt_cutoff_hz", fz_adapt_cutoff_hz_);
+        loadOptFloat("fz_d_cutoff_hz", fz_d_cutoff_hz_);
+        loadOptFloat("fz_print_hz", fz_print_hz_);
+        loadOptFloat("fz_stall_limit", fz_stall_limit_);
+
+        std::cout << "[PBIC Fz-adapt] enable=" << fz_adapt_enable_
+                  << " target=" << fz_target_ << " N"
+                  << " | Kp=" << fz_kp_ << " mm/N"
+                  << " Ki=" << fz_ki_ << " mm/(s*N)"
+                  << " Kd=" << fz_kd_ << " mm*s/N"
+                  << " | slew=" << fz_adapt_rate_ << " mm/s"
+                  << " (dz 제한 없음, 접촉 게이팅 없음)"
+                  << std::endl;
     }
 
 
@@ -2213,6 +2262,17 @@ namespace SKKU
         static Eigen::Matrix<float, 6, 1> Fext_prev = Eigen::Matrix<float, 6, 1>::Zero();
         static Eigen::Matrix<float, 6, 1> Fext_filt = Eigen::Matrix<float, 6, 1>::Zero();
 
+        // 0804 Fz adaptive z-reference shaping state
+        static float fz_ref_offset = 0.0f;       // dz [mm]
+        static float fz_ref_offset_rate = 0.0f;  // dz_dot 실측 [mm/s], 로그용
+        static float fz_ref_offset_ff = 0.0f;    // v_d로 나가는 feedforward [mm/s]
+        static float fz_adapt_filt = 0.0f;       // 힘 오차 판정용 |Fz| LPF [N]
+        static bool  fz_adapt_filt_init = false;
+        static float fz_integ = 0.0f;            // 적분항 [N*s]
+        static float fz_err_prev = 0.0f;         // D항용 이전 오차 [N]
+        static bool  fz_err_prev_valid = false;
+        static float fz_error_dot = 0.0f;        // 필터링된 오차 변화율 [N/s]
+
         if (pbic_fext_motion_id != operator_call_count_) {
             pbic_fext_motion_id = operator_call_count_;
             pbic_fext_filter_init = false;
@@ -2220,6 +2280,17 @@ namespace SKKU
             Fext_filt.setZero();
             singularity_counter = 0;
             zyz_ref_initialized = false;
+
+            // 새 모션은 항상 nominal reference에서 시작해야 bumpless
+            fz_ref_offset = 0.0f;
+            fz_ref_offset_rate = 0.0f;
+            fz_ref_offset_ff = 0.0f;
+            fz_adapt_filt = 0.0f;
+            fz_adapt_filt_init = false;
+            fz_integ = 0.0f;
+            fz_err_prev = 0.0f;
+            fz_err_prev_valid = false;
+            fz_error_dot = 0.0f;
         }
 
         auto ft_matched = sensor_data.getMatchedAFTWrench();
@@ -2258,6 +2329,190 @@ namespace SKKU
         F_ext[5] = 0.0;
         // F_ext = Fext_raw;
 //
+        // ------------------------------------------------------------
+        // 0804 Fz adaptive z-reference shaping
+        //
+        // 들어온 z reference가 무엇이든, |Fz|를 fz_target_에 유지하는
+        // 것만 목표로 한다. 목표에서 벗어난 양과 방향에 비례한 속도로
+        // z reference를 움직이고, 상한 속도로 saturate.
+        //
+        //   |Fz| > target -> dz를 + 로 (z 올림, 접촉력 약해짐)
+        //   |Fz| < target -> dz를 - 로 (z 내림, 접촉력 세짐)
+        //
+        // 밴드(deadband)를 쓰지 않는 이유: 밴드 안에서는 보정이 멈춰서
+        // 루프가 열린다. 표면이 움직여도 밴드 끝에 닿을 때까지 방치하다
+        // 뒤늦게 반응하게 되고, 260804/1601에서 밴드 진입 직후 dz가
+        // 멈추면서 힘이 5.9 -> 1.2 N으로 흘러나간 게 그 현상이다.
+        // setpoint 하나면 항상 닫힌 루프다.
+        //
+        // dz 크기 제한도, 접촉 게이팅도 두지 않는다. 비접촉이면
+        // |Fz| < target 이므로 접촉을 찾을 때까지 fz_adapt_rate_ 속도로
+        // 계속 내려간다 (force-seeking approach).
+        //
+        // 비례 대상이 dz(위치)가 아니라 dz_dot(속도)인 이유:
+        // dz = k*e 로 하면 유효 강성이 K_z/(1+K_z*k)로 바뀔 뿐이라
+        // K를 낮춘 것과 같아지고, P droop 때문에 밴드 안으로 못 들어온다.
+        // 속도에 비례시켜야 누적이 생겨서 표면 위치와 무관하게
+        // 힘을 밴드에 넣을 수 있다.
+        //
+        // saturate가 필요한 이유: 목표 근처에서는 속도가 작아져서
+        // 표면이 움직이면 v_surface/gain 만큼 뒤처진다. gain을 키우고
+        // 상한으로 자르면 목표 근처에서만 부드럽고 멀리서는 최대 속도가 된다.
+        // ------------------------------------------------------------
+        {
+            const float fz_mag = std::fabs(F_ext(2));
+
+            if (!fz_adapt_filt_init) {
+                fz_adapt_filt = fz_mag;
+                fz_adapt_filt_init = true;
+            } else {
+                const float alpha_fz =
+                    1.0f - std::exp(-2.0f * kPi * fz_adapt_cutoff_hz_ * dt);
+                fz_adapt_filt += alpha_fz * (fz_mag - fz_adapt_filt);
+            }
+
+            const float fz_error = fz_adapt_filt - fz_target_;
+
+            // D항 입력: 힘 오차의 변화율. 미분은 노이즈를 키우므로
+            // fz_d_cutoff_hz_로 한 번 더 눌러서 쓴다.
+            float fz_error_dot_raw = 0.0f;
+            if (fz_err_prev_valid) {
+                fz_error_dot_raw = (fz_error - fz_err_prev) / dt;
+            }
+            fz_err_prev = fz_error;
+            fz_err_prev_valid = true;
+
+            const float alpha_d =
+                1.0f - std::exp(-2.0f * kPi * fz_d_cutoff_hz_ * dt);
+            fz_error_dot += alpha_d * (fz_error_dot_raw - fz_error_dot);
+
+            // 로봇이 명령을 실행하지 못하는 상태(보호정지/서보오프)에서는
+            // 힘이 변하지 않으므로 적분기가 무한정 감긴다. 1732에서 imp_z가
+            // 실제 TCP z보다 421 mm 앞서 나갔고, 그 상태로 정지를 풀면
+            // 로봇이 그만큼 튄다. 모델과 실제가 벌어지면 적분을 멈춘다.
+            const float fz_model_gap =
+                std::fabs(imp.p_m(2) - s.p(2) * 1000.0f);
+            const bool fz_stalled =
+                (fz_stall_limit_ > 0.0f) && (fz_model_gap > fz_stall_limit_);
+
+            if (fz_stalled) {
+                static int fz_stall_warn = 0;
+                if ((fz_stall_warn++ % 200) == 0) {
+                    ROS_WARN("[Fz-adapt] STALLED: imp_z - actual_z = %.1f mm > %.1f mm. "
+                             "Robot is not following the command; freezing adaptation.",
+                             fz_model_gap, fz_stall_limit_);
+                }
+            }
+
+            // 위치정렬 구간에서는 dz를 "물러나는 방향으로만" 움직인다.
+            //
+            //   힘이 약함 -> 정지. 접촉을 찾겠다고 내려가지 않는다.
+            //                (260804/1732: 자유공간에서 40mm/s로 내리꽂아 충돌)
+            //   힘이 셈   -> 올라간다. 눌리면 무조건 물러날 수 있어야 한다.
+            //                (260804/1839: TRAVEL에서 보정을 완전히 껐더니
+            //                 nominal이 표면을 파고들어 110N까지 갔다)
+            //
+            // dz는 0으로 리셋하지 않고 유지해서, 다시 내려올 때
+            // 직전에 학습한 표면 오프셋에서 재개하도록 한다.
+            const bool fz_draw_segment = trajectory.draw_mode;
+
+            if (fz_adapt_enable_ && !fz_stalled) {
+                fz_integ += fz_error * dt;
+
+                // PID 출력이 곧 z reference offset [mm]
+                float dz_cmd = fz_kp_ * fz_error
+                             + fz_ki_ * fz_integ
+                             + fz_kd_ * fz_error_dot;
+
+                // 위치정렬 구간: 물러나는 방향(dz 증가)만 통과시킨다.
+                if (!fz_draw_segment && dz_cmd < fz_ref_offset) {
+                    dz_cmd = fz_ref_offset;
+                }
+
+                // 안전용 slew limit. dz 크기 제한은 두지 않는다.
+                const float dz_step_max = fz_adapt_rate_ * dt;
+                if (dz_cmd > fz_ref_offset + dz_step_max) {
+                    dz_cmd = fz_ref_offset + dz_step_max;
+                } else if (dz_cmd < fz_ref_offset - dz_step_max) {
+                    dz_cmd = fz_ref_offset - dz_step_max;
+                }
+
+                // anti-windup: 실제로 나간 dz에 맞춰 적분항을 역산해두면
+                // slew에 걸린 동안 적분기가 부풀지 않는다.
+                if (fz_ki_ > 1.0e-6f) {
+                    fz_integ = (dz_cmd
+                                - fz_kp_ * fz_error
+                                - fz_kd_ * fz_error_dot) / fz_ki_;
+                }
+
+                fz_ref_offset_rate = (dz_cmd - fz_ref_offset) / dt;
+                fz_ref_offset = dz_cmd;
+
+                // v_d로 내보낼 feedforward 속도.
+                // dz의 실제 미분(fz_ref_offset_rate)을 쓰면 P/D항이 힘 신호를
+                // 미분한 값이라 노이즈가 그대로 실린다. 260804/1726에서
+                // dz_dot std가 14.4 mm/s였고 그 중 P항 기여가 지배적이었다.
+                // 적분항의 속도(Ki*e)만 매끄러우므로 이것만 feedforward한다.
+                fz_ref_offset_ff = fz_ki_ * fz_error;
+            } else {
+                fz_ref_offset_rate = 0.0f;
+                fz_ref_offset_ff = 0.0f;
+            }
+
+            // offset을 z reference에 반영.
+            // v_d까지 같이 밀어줘야 임피던스 모델이 B(v_d - v) 때문에
+            // offset 이동을 외란으로 되받지 않는다.
+            const float z_ref_nominal = p_d(2);
+            p_d(2) += fz_ref_offset;
+            v_d(2) += fz_ref_offset_ff;
+
+            pbic_fz_adapt_log_[0] = fz_ref_offset;
+            pbic_fz_adapt_log_[1] = fz_ref_offset_rate;
+            pbic_fz_adapt_log_[2] = fz_adapt_filt;
+            pbic_fz_adapt_log_[3] = fz_error;       // |Fz| - target [N]
+            pbic_fz_adapt_log_[4] = z_ref_nominal;  // 원래 들어온 z reference
+            pbic_fz_adapt_log_[5] = p_d(2);         // 실제로 제어기에 들어간 z reference
+
+            // ------------------------------------------------------------
+            // 터미널 실시간 출력. fz_print_hz_ = 0 이면 끈다.
+            // RT loop에서 매 주기 찍으면 밀리므로 주기를 낮춰서 찍는다.
+            // ------------------------------------------------------------
+            if (fz_print_hz_ > 0.0f) {
+                static float fz_print_acc = 0.0f;
+                fz_print_acc += dt;
+
+                if (fz_print_acc >= 1.0f / fz_print_hz_) {
+                    fz_print_acc = 0.0f;
+
+                    const char* state =
+                        fz_stalled ? "STALL (동결)"
+                      : (fz_ref_offset_rate > 0.01f)
+                            ? (fz_draw_segment ? "UP   (힘 줄임)"
+                                               : "UP   (TRAVEL 후퇴)")
+                      : (fz_ref_offset_rate < -0.01f) ? "DOWN (힘 늘림)"
+                      : (fz_draw_segment ? "HOLD" : "TRAVEL(후퇴만 허용)");
+
+                    std::printf(
+                        "[Fz-adapt] |Fz|=%6.2f N (target %.1f, err %+6.2f) | "
+                        "P=%+7.3f I=%+8.3f D=%+7.3f -> dz=%+8.3f mm (%+7.2f mm/s) | "
+                        "z_ref %8.3f -> %8.3f | %s\n",
+                        fz_adapt_filt, fz_target_, fz_error,
+                        fz_kp_ * fz_error,
+                        fz_ki_ * fz_integ,
+                        fz_kd_ * fz_error_dot,
+                        fz_ref_offset, fz_ref_offset_rate,
+                        z_ref_nominal, p_d(2), state);
+                    std::fflush(stdout);
+                }
+            }
+
+            // ref_task_*_log는 위에서 nominal 기준으로 이미 채워졌으므로
+            // 실제로 임피던스에 들어간 z reference로 갱신한다.
+            // nominal은 ref_z - pbic_fz_adapt[0]으로 복원 가능하다.
+            g_ref_task_pose_log[2].store(p_d(2), std::memory_order_relaxed);
+            g_ref_task_vel_log[2].store(v_d(2), std::memory_order_relaxed);
+        }
+
         //FT센서사용으로 비활성화
         Eigen::Matrix<float, 6, 6> J_inv = dampedPseudoInverse(s.J, 5e-3f);
 

@@ -388,6 +388,10 @@ class TrajectoryGen{
 //waypoint 때문에 수정 0730
         std::vector<double> dbic_waypoint_times_;
         std::vector<Eigen::Vector3f> dbic_waypoint_positions_;
+        // 0804 waypoint별 모드. 각 원소는 "그 waypoint로 들어오는 구간"의 모드.
+        // true = 그리기(접촉력 기반 Z 보정 ON), false = 위치정렬(보정 OFF)
+        // goal generator가 point.velocity.linear.z 로 보낸다.
+        std::vector<bool> dbic_waypoint_draw_modes_;
         std::vector<Eigen::Vector3f> dbic_waypoint_velocities_;
         std::vector<Eigen::Quaternionf> dbic_waypoint_orientations_;
 //

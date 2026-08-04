@@ -210,6 +210,10 @@ namespace SKKU {
 
         Forces F;
         float pbic_ik_jump_log = 0.0f;
+        // 0804 Fz adaptive z-reference shaping log
+        // [dz(mm), dz_dot(mm/s), |Fz|_filt(N), force error(N),
+        //  nominal z ref(mm), adapted z ref(mm)]
+        float pbic_fz_adapt_log_[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     
         Eigen::Matrix<float, 6, 1> F_estimate(const Eigen::Matrix<float, 1, 6>& input_data_1, const Eigen::Matrix<float, 1, 6>& input_data_2, const Eigen::Matrix<float, 1, 6>& input_data_3);
         void appendMatrixToFile_1(const Eigen::Matrix<float, 6, 1>& matrix, const std::string& filename);
@@ -322,8 +326,30 @@ namespace SKKU {
 
         float imp_m;
         float imp_k;
-        float imp_b; 
-                
+        float imp_b;
+
+        // 0804 Fz adaptive z-reference shaping — 힘 오차에 대한 PID.
+        // 출력이 z reference offset [mm] 자체다.
+        //
+        //   e  = |Fz| - fz_target_
+        //   dz = fz_kp_*e + fz_ki_*(적분 e) + fz_kd_*(e의 변화율)
+        //
+        // fz_kp_ = fz_kd_ = 0 이면 순수 적분(기존 동작)과 동일.
+        // dz 크기 제한 없음, 접촉 게이팅 없음, deadband 없음.
+        // 값은 control_gains_utf8.yaml에서 덮어쓴다 (키가 없으면 아래 기본값 유지).
+        bool  fz_adapt_enable_ = true;
+        float fz_target_ = 5.0f;              // [N]     유지할 접촉력
+        float fz_kp_ = 0.0f;                  // [mm/N]      즉각 순응 (유효 강성 완화)
+        float fz_ki_ = 10.0f;                 // [mm/(s*N)]  정상상태 오차 제거
+        float fz_kd_ = 0.0f;                  // [mm*s/N]    오버슛 완충
+        float fz_adapt_rate_ = 100.0f;        // [mm/s]  dz slew limit (안전용)
+        float fz_adapt_cutoff_hz_ = 2.0f;     // [Hz]    |Fz| LPF
+        float fz_d_cutoff_hz_ = 5.0f;         // [Hz]    D항 미분 LPF
+        float fz_print_hz_ = 5.0f;            // [Hz]    터미널 출력 주기 (0이면 끔)
+        // 로봇이 실제로 안 따라오면(보호정지/서보오프) 루프가 열려서 적분기가
+        // 무한정 감긴다. imp_z와 실제 TCP z의 차이로 그 상태를 잡는다.
+        float fz_stall_limit_ = 50.0f;        // [mm]    0이면 검사 끔
+
         int n = 10;
         float t_start = 0.0;
         
