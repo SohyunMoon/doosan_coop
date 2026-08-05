@@ -146,6 +146,77 @@ namespace SKKU {
 
 namespace SKKU {
 
+    // ==================================================================================
+    // external joint torque 의 과거 샘플을 들고 있는 링버퍼.
+    // MLP2 는 현재 토크와 함께 1 / 3 / 5 샘플 전 토크도 입력으로 받는다
+    // (학습 시 external_torque_lag{1,3,5}.txt = external_torque.txt 를 그만큼 민 것).
+    //
+    // "샘플" 은 이 버퍼에 push 하는 주기 = 그 스레드의 제어/로깅 주기다.
+    // 학습 데이터가 기록된 주기와 push 주기가 다르면 lag 이 뜻하는 시간이 달라진다.
+    //
+    // 스레드마다 각자 인스턴스를 가져야 한다 (공유하면 push 순서가 섞인다).
+    // ==================================================================================
+    class TorqueLagBuffer {
+    public:
+        static const int kDepth = 6;   // lag5 까지 쓰므로 최소 6칸
+
+        void reset() {
+            count_ = 0;
+            head_  = 0;
+        }
+
+        void push(const Eigen::Matrix<float, 1, 6>& v) {
+            buf_[head_] = v;
+            head_ = (head_ + 1) % kDepth;
+            if (count_ < kDepth) {
+                ++count_;
+            }
+        }
+
+        // lag = 0 이면 가장 최근에 push 한 값.
+        // 아직 그만큼 쌓이지 않았으면 가장 오래된 값을 돌려준다 (기동 직후 몇 샘플만 해당).
+        Eigen::Matrix<float, 1, 6> get(int lag) const {
+            if (count_ == 0) {
+                return Eigen::Matrix<float, 1, 6>::Zero();
+            }
+            if (lag > count_ - 1) {
+                lag = count_ - 1;
+            }
+            const int idx = ((head_ - 1 - lag) % kDepth + kDepth) % kDepth;
+            return buf_[idx];
+        }
+
+    private:
+        Eigen::Matrix<float, 1, 6> buf_[kDepth];
+        int head_  = 0;
+        int count_ = 0;
+    };
+
+    // ==================================================================================
+    // 임피던스 제어에 쓸 외력(F_ext)을 어디서 가져올지 고르는 스위치.
+    // 아래 IMPEDANCE_FORCE_SOURCE 값만 바꾸고 다시 빌드하면 된다.
+    //
+    //   SENSOR : AFT 힘/토크 센서의 matched wrench. 기존 거동이고 기본값이다.
+    //   MLP1   : F_estimate()  가 추정한 값 (모델 1)
+    //   MLP2   : F_estimate2() 가 추정한 값 (모델 2)
+    //
+    // 어느 모드든 F_mlp.txt / F_mlp2.txt 로그는 항상 기록되므로, 제어에 넣기 전에
+    // sensor_FT_matched.txt 와 겹쳐 그려서 모델 정확도를 먼저 확인할 수 있다.
+    //
+    // 주의 1) SENSOR 가 아닌 모드에서는 실시간 제어 스레드 안에서 TF 추론이 돌아간다.
+    //         실측 지연이 median 54us / p99 145us 인데 드물게 2ms 까지 튄다.
+    //         제어 주기를 넘길 수 있으니 loop_times.txt 를 반드시 같이 확인할 것.
+    // 주의 2) 모델은 sensor_FT_matched(센서가 볼 값) 자체를 예측하도록 학습돼 있다.
+    //         즉 "센서 대체" 용도이지 "그리퍼 보상량"이 아니다.
+    // ==================================================================================
+    enum class ImpedanceForceSource {
+        SENSOR = 0,
+        MLP1   = 1,
+        MLP2   = 2,
+    };
+
+    constexpr ImpedanceForceSource IMPEDANCE_FORCE_SOURCE = ImpedanceForceSource::SENSOR;
+
     class PBIC{
     public:
         PBIC(u_int64_t loop_time, DRAFramework::CDRFLEx& Drfl);
@@ -211,7 +282,18 @@ namespace SKKU {
         Forces F;
         float pbic_ik_jump_log = 0.0f;
     
-        Eigen::Matrix<float, 6, 1> F_estimate(const Eigen::Matrix<float, 1, 6>& input_data_1, const Eigen::Matrix<float, 1, 6>& input_data_2, const Eigen::Matrix<float, 1, 6>& input_data_3);
+        // 모델 1 : q [deg] 6개 + external joint torque [Nm] 6개 = 12 입력 -> Fx Fy Fz Mx My Mz
+        Eigen::Matrix<float, 6, 1> F_estimate(const Eigen::Matrix<float, 1, 6>& q_deg, const Eigen::Matrix<float, 1, 6>& trq_ext);
+        // 모델 2 (model_SKKU_260720_lag135_tf) : 36 입력
+        //   q [deg] 6 + task position [mm,deg] 6 + external joint torque [Nm] 6
+        //   + 같은 토크의 1 / 3 / 5 샘플 전 값 각 6
+        // 과거 토크는 호출하는 쪽이 TorqueLagBuffer 로 들고 있다가 넘긴다.
+        Eigen::Matrix<float, 6, 1> F_estimate2(const Eigen::Matrix<float, 1, 6>& q_deg,
+                                               const Eigen::Matrix<float, 1, 6>& task_p,
+                                               const Eigen::Matrix<float, 1, 6>& trq_ext,
+                                               const Eigen::Matrix<float, 1, 6>& trq_ext_lag1,
+                                               const Eigen::Matrix<float, 1, 6>& trq_ext_lag3,
+                                               const Eigen::Matrix<float, 1, 6>& trq_ext_lag5);
         void appendMatrixToFile_1(const Eigen::Matrix<float, 6, 1>& matrix, const std::string& filename);
         void appendMatrixToFile_2(const Eigen::Matrix<float, 6, 1>& matrix, const std::string& filename);
     

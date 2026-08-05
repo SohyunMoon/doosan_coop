@@ -9,6 +9,10 @@
 #include <cppflow/model.h>
 #include <iostream>
 #include <fstream>
+#include <sstream>
+#include <vector>
+#include <string>
+#include <memory>
 #include <sys/socket.h>
 #include <net/if.h>
 #include <linux/can.h>
@@ -17,10 +21,229 @@
 #include <net/if.h>
 #include <Eigen/Geometry>
 
-cppflow::model MLP_model("/home/rbl/catkin_ws/src/skku-robot/model_RISE_250828_tf");
-
-// add
+// ======================================================================================
+// MLP 힘 추정 모델 (main_final_robotiq_model.py 로 학습)
+//   출력 6열 : Fx Fy Fz [N], Mx My Mz [Nm]   (sensor_FT_matched 기준)
+//
+// 두 모델을 나란히 돌려 비교한다. 각 모델은 자기 경로 / 자기 scaler / 자기 입력 차원을
+// 따로 갖고, 입력을 만드는 함수도 F_estimate() / F_estimate2() 로 분리돼 있다.
+// 모델과 scaler 는 반드시 같은 학습 실행에서 나온 짝이어야 한다.
+// scaler 값 자체는 파일에서 읽으므로, 모델을 바꿔도 경로 상수만 고치면 된다.
+// ======================================================================================
 namespace {
+    // ---- 모델 1 : robotiq q + trq_ext (12입력) -------------------------------------
+    const char* const MLP1_MODEL_PATH  = "/home/rbl/catkin_ws/model_robotiq_260720_qtrq_tf";
+    const char* const MLP1_SCALER_PATH = "/home/rbl/catkin_ws/scaler_info_robotiq_260720_qtrq.txt";
+    constexpr int MLP1_INPUT_DIM = 12;
+
+    // ---- 모델 2 : SKKU q + task_p + trq_ext + lag1/3/5 (36입력) ----------------------
+    // 학습 스크립트: main_final_FgripperGeneration(1).py
+    //   0 ~ 5  q            [deg]        (joint_position.txt)
+    //   6 ~11  task position [mm, deg]   (task_position.txt)
+    //  12 ~17  external torque [Nm]      (external_torque.txt)
+    //  18 ~23  같은 토크 1샘플 전         (external_torque_lag1.txt)
+    //  24 ~29  같은 토크 3샘플 전         (external_torque_lag3.txt)
+    //  30 ~35  같은 토크 5샘플 전         (external_torque_lag5.txt)
+    // 출력은 force_external.txt 기준인데, 이 데이터셋에서 force_external 은
+    // sensor_FT_matched 를 1샘플 민 것과 사실상 같은 신호라 모델 1과 비교 가능하다.
+    const char* const MLP2_MODEL_PATH  = "/home/rbl/catkin_ws/model_SKKU_260720_lag135_tf";
+    const char* const MLP2_SCALER_PATH = "/home/rbl/catkin_ws/scaler_info_SKKU_260720_lag135.txt";
+    constexpr int MLP2_INPUT_DIM = 36;
+
+    constexpr int MLP_OUTPUT_DIM = 6;
+
+    // scaler_info_*.txt 에서 읽어들인 스케일러. 학습측 InputScaler / OutputScaler 와 같은 식을 쓴다.
+    struct MlpScaler {
+        bool valid = false;
+        std::vector<float> in_min, in_max, out_min, out_max;
+        float in_fr_lo  = 0.0f, in_fr_hi  = 1.0f;
+        float out_fr_lo = 0.0f, out_fr_hi = 1.0f;
+    };
+
+    // "Min Values: [1.0, 2.0, ...]" 같은 줄에서 대괄호 안 숫자들을 뽑는다.
+    std::vector<float> parseFloatList(const std::string& line) {
+        std::vector<float> out;
+        const std::size_t lb = line.find('[');
+        const std::size_t rb = line.rfind(']');
+        if (lb == std::string::npos || rb == std::string::npos || rb < lb) {
+            return out;
+        }
+        std::string body = line.substr(lb + 1, rb - lb - 1);
+        for (std::size_t i = 0; i < body.size(); ++i) {
+            if (body[i] == ',') body[i] = ' ';
+        }
+        std::istringstream ss(body);
+        float v = 0.0f;
+        while (ss >> v) {
+            out.push_back(v);
+        }
+        return out;
+    }
+
+    // "Feature Range: (0, 1)" 에서 두 값을 뽑는다.
+    bool parseRange(const std::string& line, float& lo, float& hi) {
+        const std::size_t lb = line.find('(');
+        const std::size_t rb = line.rfind(')');
+        if (lb == std::string::npos || rb == std::string::npos || rb < lb) {
+            return false;
+        }
+        std::string body = line.substr(lb + 1, rb - lb - 1);
+        for (std::size_t i = 0; i < body.size(); ++i) {
+            if (body[i] == ',') body[i] = ' ';
+        }
+        std::istringstream ss(body);
+        return static_cast<bool>(ss >> lo >> hi);
+    }
+
+    MlpScaler loadMlpScaler(const std::string& path, const char* tag, int input_dim) {
+        MlpScaler s;
+
+        std::ifstream f(path.c_str());
+        if (!f.is_open()) {
+            std::cerr << "[" << tag << "] scaler 파일을 열 수 없습니다: " << path << std::endl;
+            return s;
+        }
+
+        // 파일 앞부분의 "Validated Envelope" 는 원시 단위 학습 범위라 스케일러가 아니다.
+        // 두 스케일러 블록 모두 "Min Values:" 라는 같은 키를 쓰므로 섹션을 추적해야 한다.
+        int section = 0;  // 1 = InputScaler, 2 = OutputScaler
+        std::string line;
+        while (std::getline(f, line)) {
+            if (line.find("InputScaler Information") != std::string::npos) {
+                section = 1;
+                continue;
+            }
+            if (line.find("OutputScaler Information") != std::string::npos) {
+                section = 2;
+                continue;
+            }
+            if (section == 0) {
+                continue;
+            }
+
+            if (line.rfind("Min Values:", 0) == 0) {
+                (section == 1 ? s.in_min : s.out_min) = parseFloatList(line);
+            } else if (line.rfind("Max Values:", 0) == 0) {
+                (section == 1 ? s.in_max : s.out_max) = parseFloatList(line);
+            } else if (line.rfind("Feature Range:", 0) == 0) {
+                parseRange(line,
+                           section == 1 ? s.in_fr_lo : s.out_fr_lo,
+                           section == 1 ? s.in_fr_hi : s.out_fr_hi);
+            }
+        }
+
+        if (static_cast<int>(s.in_min.size())  != input_dim ||
+            static_cast<int>(s.in_max.size())  != input_dim ||
+            static_cast<int>(s.out_min.size()) != MLP_OUTPUT_DIM ||
+            static_cast<int>(s.out_max.size()) != MLP_OUTPUT_DIM) {
+            std::cerr << "[" << tag << "] scaler 차원이 맞지 않습니다 ("
+                      << path << "): input " << s.in_min.size() << "/" << s.in_max.size()
+                      << " (기대 " << input_dim << "), output "
+                      << s.out_min.size() << "/" << s.out_max.size()
+                      << " (기대 " << MLP_OUTPUT_DIM << ")" << std::endl;
+            return s;
+        }
+        if (s.in_fr_hi == s.in_fr_lo || s.out_fr_hi == s.out_fr_lo) {
+            std::cerr << "[" << tag << "] scaler 의 Feature Range 폭이 0 입니다: " << path << std::endl;
+            return s;
+        }
+
+        // 학습측 InputScaler 와 동일하게, 폭이 0인 열은 1.0 으로 두어 0 나눗셈을 피한다.
+        for (int i = 0; i < input_dim; ++i) {
+            if (s.in_max[i] == s.in_min[i]) {
+                std::cerr << "[" << tag << "] 입력 " << i
+                          << "번 열의 스케일 폭이 0 이라 1.0 으로 대체합니다." << std::endl;
+                s.in_max[i] = s.in_min[i] + 1.0f;
+            }
+        }
+
+        s.valid = true;
+        return s;
+    }
+
+    // 모델 하나 = TF SavedModel + 짝이 되는 scaler.
+    // cppflow::model 은 경로가 잘못되면 생성자에서 예외를 던진다. 전역 객체로 두면 그대로
+    // 노드가 죽으므로, 여기서 잡아 "이 모델만 비활성" 으로 처리한다 (경로를 자주 바꾸게 되므로).
+    class MlpEngine {
+    public:
+        MlpEngine(const char* tag, const char* model_path, const char* scaler_path, int input_dim)
+            : tag_(tag), input_dim_(input_dim) {
+            scaler_ = loadMlpScaler(scaler_path, tag, input_dim);
+            if (!scaler_.valid) {
+                std::cerr << "[" << tag_ << "] scaler 로드 실패 - 이 모델은 비활성화됩니다." << std::endl;
+                return;
+            }
+            try {
+                model_.reset(new cppflow::model(model_path));
+            } catch (const std::exception& e) {
+                std::cerr << "[" << tag_ << "] 모델 로드 실패 (" << model_path << "): "
+                          << e.what() << " - 이 모델은 비활성화됩니다." << std::endl;
+                return;
+            }
+            valid_ = true;
+            std::cout << "[" << tag_ << "] model  : " << model_path << std::endl;
+            std::cout << "[" << tag_ << "] scaler : " << scaler_path
+                      << " (입력 " << input_dim_ << ", 출력 " << MLP_OUTPUT_DIM
+                      << ") 로드 완료" << std::endl;
+        }
+
+        bool valid() const { return valid_; }
+        int inputDim() const { return input_dim_; }
+
+        // raw_input 은 학습 때와 같은 순서/단위의 원시 입력. 스케일링과 역스케일링은 여기서 한다.
+        // 실패하면 (그럴듯하지만 틀린 값 대신) 0을 돌려준다. 로그에서 바로 눈에 띈다.
+        Eigen::Matrix<float, 6, 1> infer(const std::vector<float>& raw_input) const {
+            Eigen::Matrix<float, 6, 1> out = Eigen::Matrix<float, 6, 1>::Zero();
+            if (!valid_ || static_cast<int>(raw_input.size()) != input_dim_) {
+                return out;
+            }
+
+            std::vector<float> scaled(input_dim_, 0.0f);
+            for (int i = 0; i < input_dim_; ++i) {
+                const float unit = (raw_input[i] - scaler_.in_min[i]) / (scaler_.in_max[i] - scaler_.in_min[i]);
+                scaled[i] = unit * (scaler_.in_fr_hi - scaler_.in_fr_lo) + scaler_.in_fr_lo;
+            }
+
+            std::vector<int64_t> shape = {1, static_cast<int64_t>(input_dim_)};
+            std::vector<float> raw_out;
+            try {
+                raw_out = (*model_)(cppflow::tensor(scaled, shape)).get_data<float>();
+            } catch (const std::exception& e) {
+                std::cerr << "[" << tag_ << "] 추론 실패: " << e.what() << std::endl;
+                return out;
+            }
+            if (static_cast<int>(raw_out.size()) < MLP_OUTPUT_DIM) {
+                std::cerr << "[" << tag_ << "] 출력 차원이 " << raw_out.size()
+                          << " 로 기대(" << MLP_OUTPUT_DIM << ")와 다릅니다." << std::endl;
+                return out;
+            }
+
+            for (int i = 0; i < MLP_OUTPUT_DIM; ++i) {
+                const float unit = (raw_out[i] - scaler_.out_fr_lo) / (scaler_.out_fr_hi - scaler_.out_fr_lo);
+                out(i) = unit * (scaler_.out_max[i] - scaler_.out_min[i]) + scaler_.out_min[i];
+            }
+            return out;
+        }
+
+    private:
+        const char* tag_;
+        int input_dim_;
+        MlpScaler scaler_;
+        std::unique_ptr<cppflow::model> model_;
+        bool valid_ = false;
+    };
+
+    // 첫 호출 때 한 번만 로드한다 (전역 초기화 순서 문제를 피하려고 함수 지역 static 사용).
+    const MlpEngine& mlpEngine1() {
+        static const MlpEngine e("MLP1", MLP1_MODEL_PATH, MLP1_SCALER_PATH, MLP1_INPUT_DIM);
+        return e;
+    }
+
+    const MlpEngine& mlpEngine2() {
+        static const MlpEngine e("MLP2", MLP2_MODEL_PATH, MLP2_SCALER_PATH, MLP2_INPUT_DIM);
+        return e;
+    }
+
     constexpr float DEG2RAD = static_cast<float>(M_PI) / 180.0f;
 
     inline Eigen::Quaternionf normalizeQuat(Eigen::Quaternionf q) {
@@ -402,53 +625,39 @@ namespace SKKU
 
 
     
-    Eigen::Matrix<float, 6, 1> PBIC::F_estimate(const Eigen::Matrix<float, 1, 6>& input_data_1, const Eigen::Matrix<float, 1, 6>& input_data_2, const Eigen::Matrix<float, 1, 6>& input_data_3)
+    Eigen::Matrix<float, 6, 1> PBIC::F_estimate(const Eigen::Matrix<float, 1, 6>& q_deg,
+                                                const Eigen::Matrix<float, 1, 6>& trq_ext)
     {
-        Eigen::Matrix<float, 1, 18> input_data;
+        std::vector<float> in;
+        in.reserve(MLP1_INPUT_DIM);
+        for (int i = 0; i < 6; ++i) in.push_back(q_deg(0, i));
+        for (int i = 0; i < 6; ++i) in.push_back(trq_ext(0, i));
 
-        input_data << input_data_1, input_data_2, input_data_3;
+        return mlpEngine1().infer(in);
+    }
 
-        //Whole Scaler 정보 - 학습 데이터가 바뀌면 그에 맞게 수정 필요
-        Eigen::Matrix<float, 1, 18> input_scaler_min;
-        input_scaler_min << -180, -180, -180, -180, -180, -180,
-                            -400, -400, -400, -10000000, -10000000, -10000000,
-                            -2.53435, 13.5215, 39.189, 0.139093, -0.125222, 1.70364; 
-      
-        Eigen::Matrix<float, 1, 18> input_scaler_max;
-        input_scaler_max << 180, 180, 180, 180, 180, 180,
-                            1000, 1000, 1000,10000000, 10000000, 10000000,
-                            3.84662, 55.8215, 46.2397, 0.445514, 1.2106, 3.10663; 
+    // 모델 2 : 입력 36열. 순서는 학습 스크립트의 np.concatenate 순서와 같아야 한다
+    // (파일 상단 MLP2 주석 참조). 순서가 하나라도 어긋나면 조용히 틀린 힘이 나온다.
+    Eigen::Matrix<float, 6, 1> PBIC::F_estimate2(const Eigen::Matrix<float, 1, 6>& q_deg,
+                                                 const Eigen::Matrix<float, 1, 6>& task_p,
+                                                 const Eigen::Matrix<float, 1, 6>& trq_ext,
+                                                 const Eigen::Matrix<float, 1, 6>& trq_ext_lag1,
+                                                 const Eigen::Matrix<float, 1, 6>& trq_ext_lag3,
+                                                 const Eigen::Matrix<float, 1, 6>& trq_ext_lag5)
+    {
+        std::vector<float> in;
+        in.reserve(MLP2_INPUT_DIM);
 
-        Eigen::Matrix<float, 1, 6> output_scaler_min;
-        output_scaler_min << -82.5755, -35.2342, -102.986, -3.80781, -10.2144, -3.09124;
-       
-        Eigen::Matrix<float, 1, 6> output_scaler_max;
-        output_scaler_max << -7.75589, 37.6976, -65.7997, 4.94948, 0.494817, -1.72246;
-
-        ///////////////////////////////////////////////////////////////////
-     
-        std::vector<float> input_v(18, 0.0);
-        for (int i = 0; i < 18; ++i) {
-            input_data(0, i) = (input_data(0, i) - input_scaler_min(0, i)) / (input_scaler_max(0, i) - input_scaler_min(0, i));
-            input_v[i] = input_data(0,i);
-            
-        }
-    
-        std::vector<int64_t> shape = {1, 18};
-        cppflow::tensor input_tensor(input_v, shape);
-
-        auto output_tensor = MLP_model(input_tensor);
-        std::vector<float> output_vector = output_tensor.get_data<float>();
-
-        Eigen::Matrix<float, 1, 6> output_data;
-        for (int i = 0; i < 6; ++i) {
-            output_data(0, i) = output_vector[i];
-            output_data(0, i) = output_data(0, i) * (output_scaler_max(0, i) - output_scaler_min(0, i)) + output_scaler_min(0, i);
+        const Eigen::Matrix<float, 1, 6>* blocks[6] = {
+            &q_deg, &task_p, &trq_ext, &trq_ext_lag1, &trq_ext_lag3, &trq_ext_lag5
+        };
+        for (int b = 0; b < 6; ++b) {
+            for (int i = 0; i < 6; ++i) {
+                in.push_back((*blocks[b])(0, i));
+            }
         }
 
-        Eigen::Matrix<float, 6, 1> F_estimate = output_data.transpose();
-
-        return F_estimate;
+        return mlpEngine2().infer(in);
     }
 
     //new0317
@@ -2228,11 +2437,55 @@ namespace SKKU
         Eigen::Matrix<float, 6, 1> Fext_raw =
             Eigen::Matrix<float, 6, 1>::Zero();
 
-        Fext_raw = Fft_raw;
+        // 외력 소스 선택 (impedance_controller.h 의 IMPEDANCE_FORCE_SOURCE).
+        // SENSOR 모드에서는 아래 MLP 분기가 아예 실행되지 않으므로 RT 루프에 추론 부담이 없다.
+        // 어느 모드든 F_mlp / F_mlp2 로그는 dataSaving() 스레드에서 따로 계속 기록된다.
+        if (IMPEDANCE_FORCE_SOURCE == ImpedanceForceSource::SENSOR) {
+            Fext_raw = Fft_raw;
+        } else {
+            Eigen::Matrix<float, 1, 6> q_in;
+            Eigen::Matrix<float, 1, 6> trq_in;
+            for (int i = 0; i < 6; ++i) {
+                q_in(0, i)   = robot_state->actual_joint_position[i];   // [deg]
+                trq_in(0, i) = tau_ext(i);                              // [Nm]
+            }
+
+            if (IMPEDANCE_FORCE_SOURCE == ImpedanceForceSource::MLP1) {
+                Fext_raw = F_estimate(q_in, trq_in);
+            } else {
+                // MLP2 는 과거 토크가 필요하다. 이 스레드 전용 이력을 따로 들고 간다
+                // (로깅 스레드의 버퍼와 섞이면 안 된다). 새 모션마다 초기화한다.
+                static TorqueLagBuffer trq_lag_rt;
+                static int trq_lag_rt_motion_id = -1;
+                if (trq_lag_rt_motion_id != operator_call_count_) {
+                    trq_lag_rt_motion_id = operator_call_count_;
+                    trq_lag_rt.reset();
+                }
+                trq_lag_rt.push(trq_in);
+
+                // task position 은 로깅 스레드의 task_position.txt 와 같은 방식으로 만든다
+                // (PBIC 경로 = fkin(actual_joint_position, WORLD), mm + deg).
+                Eigen::Matrix<float, 1, 6> task_in;
+                LPROBOT_POSE fk = Drfl_.fkin(robot_state->actual_joint_position,
+                                             COORDINATE_SYSTEM_WORLD);
+                for (int i = 0; i < 6; ++i) {
+                    task_in(0, i) = fk->_fPosition[i];
+                }
+
+                Fext_raw = F_estimate2(q_in,
+                                       task_in,
+                                       trq_lag_rt.get(0),
+                                       trq_lag_rt.get(1),
+                                       trq_lag_rt.get(3),
+                                       trq_lag_rt.get(5));
+            }
+        }
 
 // 0729 PBIC 외력 1차 LPF
 
         // 0729 matched Ty 부호 반전
+        // 소스가 MLP 여도 그대로 적용한다. 모델이 예측하는 대상이 이 반전 이전의
+        // sensor_FT_matched 이므로, 센서를 쓸 때와 같은 보정을 거쳐야 일관된다.
         Fext_raw(4) = -Fext_raw(4);
 
         constexpr float kPi = 3.14159265358979323846f;

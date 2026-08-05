@@ -5909,7 +5909,14 @@ void ControlLoop::dataSaving() {
     float impedance_position[NUMBER_OF_JOINT] = {0,};
     float F_external[NUMBER_OF_JOINT] = {0,};
     float F_imp_val[NUMBER_OF_JOINT] = {0,};
-    float F_external_joint[NUMBER_OF_JOINT] = {0,};
+    // J^-T * trq_ext - F_offset (tool 무게 보상). F_joint.txt 로 기록된다.
+    float F_joint[NUMBER_OF_JOINT] = {0,};
+    // 두 MLP 모델이 각각 추정한 FT 센서값. sensor_FT_matched 와 같은 축/단위이므로
+    // 세 파일을 겹쳐 그리면 두 모델의 정확도를 바로 비교할 수 있다.
+    float F_mlp[NUMBER_OF_JOINT] = {0,};
+    float F_mlp2[NUMBER_OF_JOINT] = {0,};
+    // 모델 2가 쓰는 과거 external joint torque (1/3/5 샘플 전). 이 스레드 전용 이력.
+    SKKU::TorqueLagBuffer mlp_trq_lag;
     float F_task_log[NUMBER_OF_JOINT] = {0,};   // 추가
     float F_Mass[NUMBER_OF_JOINT] = {0,};
     float F_rest[NUMBER_OF_JOINT] = {0,};
@@ -6156,6 +6163,46 @@ void ControlLoop::dataSaving() {
                 actual_position[i] = res->_fPosition[i];
             }
         }
+
+        // ---- MLP 힘 추정 (두 모델 비교용 로그) ----
+        // 모델 1 : q [deg] + external joint torque [Nm]                            (12입력)
+        // 모델 2 : 위 둘 + task position [mm,deg] + 토크의 1/3/5 샘플 전 값        (36입력)
+        //
+        // 학습 데이터가 바로 이 로거의 joint_position / task_position / external_torque 이므로,
+        // 여기서는 그 파일들에 찍히는 변수(actual_positionj, actual_position, trq_ext)를 그대로 쓴다.
+        // actual_position 이 위에서 갱신된 뒤여야 같은 시점 값이 들어간다.
+        //
+        // 여기서 나온 값은 로그 전용이다. 임피던스 제어가 어떤 힘을 쓸지는
+        // impedance_controller.h 의 IMPEDANCE_FORCE_SOURCE 가 따로 정하며, 그 계산은 RT 스레드에서 한다.
+        // 추론을 RT 제어 스레드가 아니라 이 로깅 스레드에서 돌리므로, 지연이 튀어도 torque_rt 주기에는 영향이 없다.
+        {
+            Eigen::Matrix<float, 1, 6> q_input_matrix;
+            Eigen::Matrix<float, 1, 6> task_p_input_matrix;
+            Eigen::Matrix<float, 1, 6> trq_ext_input_matrix;
+            for (int i = 0; i < NUMBER_OF_JOINT; ++i) {
+                q_input_matrix(0, i)       = actual_positionj[i];
+                task_p_input_matrix(0, i)  = actual_position[i];
+                trq_ext_input_matrix(0, i) = trq_ext[i];
+            }
+
+            // lag 이력은 이 스레드 전용. RT 스레드의 버퍼와 공유하면 push 순서가 섞인다.
+            mlp_trq_lag.push(trq_ext_input_matrix);
+
+            const Eigen::Matrix<float, 6, 1> F_mlp_vec  =
+                F_estimate(q_input_matrix, trq_ext_input_matrix);
+            const Eigen::Matrix<float, 6, 1> F_mlp2_vec =
+                F_estimate2(q_input_matrix,
+                            task_p_input_matrix,
+                            mlp_trq_lag.get(0),
+                            mlp_trq_lag.get(1),
+                            mlp_trq_lag.get(3),
+                            mlp_trq_lag.get(5));
+
+            for (int i = 0; i < NUMBER_OF_JOINT; ++i) {
+                F_mlp[i]  = F_mlp_vec(i);
+                F_mlp2[i] = F_mlp2_vec(i);
+            }
+        }
         //
         //new0324
         pose6ToQuatAssumingZYZ(raw_actual_flange_position, actual_flange_quat_assuming_zyz);
@@ -6240,7 +6287,7 @@ void ControlLoop::dataSaving() {
             }
 
             F_external[i] = F.Fext[i];
-            F_external_joint[i] = F.Fext_joint[i];
+            F_joint[i] = F.Fext_joint[i];
             F_impedance[i] = F.Fimp[i];
             F_task_log[i] = F.F_task[i];      // 추가
             F_Mass[i] = F.F_mass[i];
@@ -6300,7 +6347,11 @@ void ControlLoop::dataSaving() {
         logData("s_task_acc.txt", s_task_acc_log, 6);
 
         logData("F_imp_val.txt", F_imp_val, NUMBER_OF_JOINT);
-        logData("force_external_joint.txt", F_external_joint, NUMBER_OF_JOINT);
+        // J^-T * trq_ext 에서 tool 무게(yaml 의 F_offset_gain)만 뺀 값.
+        // 260805 이전 데이터에서는 같은 신호가 force_external_joint.txt 라는 이름으로 기록돼 있다.
+        logData("F_joint.txt", F_joint, NUMBER_OF_JOINT);
+        logData("F_mlp.txt", F_mlp, NUMBER_OF_JOINT);
+        logData("F_mlp2.txt", F_mlp2, NUMBER_OF_JOINT);
         logData("actual_velocity_jacobian.txt", actual_velocity_jacobian, NUMBER_OF_JOINT); 
         logData("error.txt", error, NUMBER_OF_TASK);
         logData("error_dot.txt", error_dot, NUM_TASK);    
