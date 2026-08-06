@@ -4185,13 +4185,31 @@ TaskRef TrajectoryGen::samplePBICWaypointGoal(
             ? dbic_waypoint_draw_modes_[k + 1]
             : true;
 
-    // 260805 제자리 정지 + DRAW 구간이면 접촉 확인 대상이다.
-    // hold 는 같은 pose 를 두 시간에 넣어 만들었으므로 위치가 같은 구간이 곧 hold 다.
-    ref.contact_hold =
-        ref.draw_mode &&
+    // 260806 접촉 확인 대상 hold 판정
+    //
+    // 조건 셋을 모두 만족해야 한다.
+    //   1) 제자리 정지 구간(hold)      - 같은 pose 를 두 시간에 넣어 만든 구간
+    //   2) 이 hold 의 모드가 DRAW      - 다음이 획이라 접촉이 필요하다
+    //   3) 직전 구간이 TRAVEL 이었다   - 띄웠다가 막 내려온 참이다
+    //
+    // 3) 이 핵심이다. 획을 이어 그리는 중(직전도 DRAW)이면 펜이 이미 종이에
+    // 닿아 있으므로 기다릴 이유가 없다. 260806/1558 에서 이 조건이 없어
+    // 획 사이 hold 마다 접촉 대기가 걸렸고, |Fz| 가 임계값을 오르내리면
+    // 매번 타임아웃까지 멈춰 있었다.
+    //
+    // 구간 k 는 knot k -> k+1 이므로 직전 구간 k-1 의 모드는 draw_modes_[k] 다.
+    const bool is_hold_segment =
         (k + 1 < dbic_waypoint_positions_.size()) &&
         ((dbic_waypoint_positions_[k + 1] -
           dbic_waypoint_positions_[k]).norm() < 1e-6f);
+
+    const bool arrived_by_travel =
+        (k == 0) ||
+        (k < dbic_waypoint_draw_modes_.size() &&
+         !static_cast<bool>(dbic_waypoint_draw_modes_[k]));
+
+    ref.contact_hold =
+        ref.draw_mode && is_hold_segment && arrived_by_travel;
 
     ref.segment_remaining_sec =
         std::max(0.0, dbic_waypoint_times_[k + 1] - t);
