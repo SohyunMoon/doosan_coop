@@ -216,18 +216,33 @@ namespace SKKU {
         MLP2   = 2,
     };
 
-    // 260805: MLP1 으로 전환. 되돌리려면 SENSOR 로 바꾸면 된다.
+    // 260806: SENSOR 로 복귀. MLP 는 검증 전까지 쓰지 말 것.
     //
-    // 주의: 260805/1937 데이터 기준으로 두 모델 다 Fz 에 큰 상수 offset 이 있다.
-    //   MLP1  Fz  MAE 8.56 N,  bias -8.02 N   (오차의 대부분이 offset)
-    //   MLP2  Fz  MAE 10.29 N, bias -9.95 N
-    // fz_target 이 5 N 인데 offset 이 그보다 크므로, 접촉 판정과 Fz 보정이
-    // 그대로는 맞지 않는다. 실기 투입 전에 영점을 확인할 것.
+    // === 260806/1202 사고 기록 (MLP1 으로 돌리다 로봇 파손) ===
+    // 기동 직후 0.5초 만에 발산했다. 로그(F_mlp.txt vs sensor_FT_matched.txt):
+    //
+    //   t=0.196s   MLP1 Fz 17.1 N   센서  5.0 N
+    //   t=0.220s   MLP1 Fz 46.8 N   센서  4.4 N   <- 없는 힘 42 N
+    //   t=0.244s   MLP1 Fz 61.8 N   센서  8.9 N
+    //
+    // 이 거짓 외력이 그대로 토크가 되어 J2 가 -300 Nm 로 포화, z 가 478 -> 371 mm
+    // 로 내리꽂히며 센서 실측 202 N 충돌, 보호정지. joint_command 와 실제 joint
+    // 괴리가 J3 에서 115 도까지 벌어졌다.
+    //
+    // 원인: 이 모델의 입력은 q + external_joint_torque 인데, 로봇이 가속하는
+    // 동안 external_joint_torque 에는 접촉이 아니라 동역학 성분이 실린다.
+    // 정지 중에는 그럭저럭 맞다가(오차 ~2 N) 움직이는 순간 무너진다.
+    // 정지 상태 영점부터 이미 어긋나 있다: MLP Fz +9.9 N vs 센서 -4.0 N.
+    //
+    // MLP 를 다시 쓰려면 최소한 아래가 먼저 필요하다.
+    //   1) 정지 상태 영점 보정 (현재 약 14 N 차이)
+    //   2) 가속 구간에서의 정확도 검증 (정지/이동 구간을 나눠서 비교)
+    //   3) |F_mlp - F_sensor| 가 임계값을 넘으면 센서로 폴백하는 안전장치
+    //
+    // 참고: 260805/1937 기준 두 모델 다 Fz bias 가 크다.
+    //   MLP1  Fz MAE 8.56 N,  bias -8.02 N     MLP2  Fz MAE 10.29 N, bias -9.95 N
     // (analyze_mlp_models.py 로 F_mlp.txt 와 sensor_FT_matched.txt 를 비교)
-    //
-    // MLP1 을 고른 이유: 전체 평균은 MLP2 가 근소하게 낫지만(33.2% vs 34.1%),
-    // 접촉 제어에서 가장 중요한 Fz 는 MLP1 이 16.8% 낫다.
-    constexpr ImpedanceForceSource IMPEDANCE_FORCE_SOURCE = ImpedanceForceSource::MLP1;
+    constexpr ImpedanceForceSource IMPEDANCE_FORCE_SOURCE = ImpedanceForceSource::SENSOR;
 
     class PBIC{
     public:
