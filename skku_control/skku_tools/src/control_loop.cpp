@@ -4551,9 +4551,10 @@ ImpedanceControlLoop::ImpedanceControlLoop(moveit_msgs::CartesianTrajectory msg,
                                            DRAFramework::CDRFLEx& Drfl)
     : ControlLoop(msg, loop_time, realtimeconfig, Drfl)
 {
-    // 현재 실험은 DBICs\
-    // setImpedanceImplMode(ImpedanceImplMode::kDBIC);
-    setImpedanceImplMode(ImpedanceImplMode::kPBIC_TDC);
+    // 260806 임피던스 구현(PBIC_TDC / DBIC) 선택은 control_loop.h 의
+    // impedance_impl_mode_ 초기값 한 곳에서만 한다.
+    // 여기서 setImpedanceImplMode() 를 부르면 헤더 값을 덮어써서,
+    // 헤더만 고치고 왜 안 바뀌는지 헤매게 된다. 그래서 호출하지 않는다.
 
     ////////////////////////// Flange ////////////////////////// 
     setTaskPointMode(TaskPointMode::kFlange);
