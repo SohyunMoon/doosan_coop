@@ -606,6 +606,9 @@ namespace {
 }//
 
 
+// control_loop.cpp 의 전역. 모션이 바뀔 때 DBIC 쪽 lag 버퍼를 초기화하는 데 쓴다.
+extern int operator_call_count_;
+
 namespace SKKU
 {
     namespace fs = boost::filesystem;
@@ -1494,8 +1497,51 @@ namespace SKKU
         Eigen::Matrix<float, 6, 1> Fext_raw =
             Eigen::Matrix<float, 6, 1>::Zero();
 
-        if (ft_ready) {
-            Fext_raw = Fft_raw;
+        // 외력 소스 선택 (impedance_controller.h 의 IMPEDANCE_FORCE_SOURCE).
+        // PBIC 의 MotionGenerator 와 같은 규칙을 DBIC 경로에도 적용한다.
+        // SENSOR 모드는 FT 센서가 5샘플 이상 유효할 때까지 0 을 유지한다(기존 동작).
+        // MLP 모드는 센서를 쓰지 않으므로 그 워밍업이 필요 없다.
+        if (IMPEDANCE_FORCE_SOURCE == ImpedanceForceSource::SENSOR) {
+            if (ft_ready) {
+                Fext_raw = Fft_raw;
+            }
+        } else {
+            Eigen::Map<const Eigen::Matrix<float, 6, 1>>
+                tau_ext_dbic(robot_state->external_joint_torque);
+
+            Eigen::Matrix<float, 1, 6> q_in;
+            Eigen::Matrix<float, 1, 6> trq_in;
+            for (int i = 0; i < 6; ++i) {
+                q_in(0, i)   = robot_state->actual_joint_position[i];   // [deg]
+                trq_in(0, i) = tau_ext_dbic(i);                         // [Nm]
+            }
+
+            if (IMPEDANCE_FORCE_SOURCE == ImpedanceForceSource::MLP1) {
+                Fext_raw = F_estimate(q_in, trq_in);
+            } else {
+                // MLP2 는 과거 토크가 필요하다. 이 스레드 전용 이력.
+                static TorqueLagBuffer trq_lag_dbic;
+                static int trq_lag_dbic_motion_id = -1;
+                if (trq_lag_dbic_motion_id != operator_call_count_) {
+                    trq_lag_dbic_motion_id = operator_call_count_;
+                    trq_lag_dbic.reset();
+                }
+                trq_lag_dbic.push(trq_in);
+
+                Eigen::Matrix<float, 1, 6> task_in;
+                LPROBOT_POSE fk = Drfl_.fkin(robot_state->actual_joint_position,
+                                             COORDINATE_SYSTEM_WORLD);
+                for (int i = 0; i < 6; ++i) {
+                    task_in(0, i) = fk->_fPosition[i];
+                }
+
+                Fext_raw = F_estimate2(q_in,
+                                       task_in,
+                                       trq_lag_dbic.get(0),
+                                       trq_lag_dbic.get(1),
+                                       trq_lag_dbic.get(3),
+                                       trq_lag_dbic.get(5));
+            }
         }
 
         //external_joint_torque use
