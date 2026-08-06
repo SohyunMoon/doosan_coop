@@ -437,6 +437,15 @@ namespace SKKU {
 
         bool has_prev_J_dbic_ = false;
         Eigen::Matrix<float, 6, 1> tau_prev_dbic_ = Eigen::Matrix<float, 6, 1>::Zero();
+
+        // 260806 토크 변화율 제한의 출발점을 현재 실제 관절토크로 잡았는지 여부.
+        //
+        // tau_prev_dbic_ 를 0 으로 두고 시작하면, 첫 명령이 rate limit 때문에
+        // 0 근처에서 출발해 팔을 지탱하지 못한다. 260806/1524 에서 J2 는
+        // -77.9 Nm 가 필요했는데 첫 명령이 -56.6 Nm 로 21 Nm 부족했고,
+        // 그만큼 팔이 주저앉으며 40mm 낙하 -> 오버슛 -> 출렁임으로 이어졌다.
+        // 게인을 낮춰도 이 낙하는 그대로였다.
+        bool tau_prev_seeded_dbic_ = false;
         bool has_prev_task_vel_dbic_ = false;
         Eigen::Vector3f prev_task_v_dbic_ = Eigen::Vector3f::Zero();
         Eigen::Vector3f prev_task_w_dbic_ = Eigen::Vector3f::Zero();

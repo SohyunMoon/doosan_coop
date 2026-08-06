@@ -1081,6 +1081,7 @@ namespace SKKU
         qddot_filt_dbic_.setZero();
 
         tau_prev_dbic_.setZero();
+        tau_prev_seeded_dbic_ = false;
 
         // 260806 예전에는 ControlGeneratorDBIC 안의 static 이라 여기서 손댈 수
         // 없었고, 그래서 모션이 바뀌어도 직전 값이 남아 첫 샘플에 킥이 생겼다.
@@ -1672,6 +1673,9 @@ namespace SKKU
         s.J.transpose()*(Fimp+Fext_filt_dbic_2_-F_offset)
         + Nhat;
 
+        // Eigen::Matrix<float, 6, 1> tau =
+        // s.J.transpose()*(Fimp+Fext_filt_dbic_2_)
+        // + Nhat;
 
         auto clampf = [](float v, float lo, float hi) {
             return (v < lo) ? lo : ((v > hi) ? hi : v);
@@ -1683,6 +1687,21 @@ namespace SKKU
         };
 
         
+        // ------------------------------------------------------------------
+        // 260806 토크 인계(handover) 연속성
+        //
+        // 아래 rate limit 은 tau_prev_dbic_ 를 기준으로 한 샘플 변화폭을 묶는다.
+        // 그 값이 0 에서 시작하면 첫 명령이 팔을 지탱할 만큼 나가지 못해
+        // 기동 순간 팔이 주저앉는다. 위치제어가 잡고 있던 실제 토크에서
+        // 이어받도록 첫 샘플에 한 번만 씨앗값을 넣는다.
+        // ------------------------------------------------------------------
+        if (!tau_prev_seeded_dbic_) {
+            for (int i = 0; i < 6; ++i) {
+                tau_prev_dbic_(i) = robot_state->actual_joint_torque[i];
+            }
+            tau_prev_seeded_dbic_ = true;
+        }
+
         for (int i = 0; i < 6; ++i) {
             F.F_mass[i] = Fmass(i);
             F.F_rest[i] = Fspring(i);

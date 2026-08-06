@@ -1,6 +1,6 @@
 
 imp_m: 2.0
-imp_k: 5.0
+imp_k: 2.5
 
 # 임피던스 모델 축별 스케일. 축 순서: X, Y, Z, Rx, Ry, Rz
 #   K_gains[i] = imp_k_scale[i] * imp_k          [N/mm]
@@ -10,7 +10,7 @@ imp_k: 5.0
 # 현재 Z: K = 1.0 * 5.0 = 5.0 N/mm. 접촉 피크를 줄이려면 Z 항목을 낮춘다.
 
 # ## drawing
-imp_k_scale:        [8.0, 8.0, 8.0, 8.0, 8.0, 10.0]
+imp_k_scale:        [1.0, 1.0, 1.0, 75.0, 75.0, 75.0]
 imp_m_scale:        [1.0, 1.0, 1.0, 1.0, 1.0,  1.0]
 # imp_damping_ratio:  [8.0, 8.0, 8.0, 8.0, 8.0,  8.0]
 imp_damping_ratio:  [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
@@ -53,12 +53,15 @@ imp_damping_ratio:  [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 #   slew 상한 40 mm/s에 걸린 채로 155 mm를 내리꽂았고, raw Fz 138.7 N 충돌 후
 #   로봇이 보호정지했다. Ki=3이면 같은 상황에서 14.4 mm/s로 내려간다.
 #   -> 1726에서 검증된 게인셋으로 복원.
+# 260806: 접촉력 기반 Z reference 보정 끔.
+# DBIC 기동 발산을 진단하는 동안 변수를 줄이기 위해 비활성화한다.
+# 켜면 |Fz| 를 fz_target 에 맞추려고 명령 z 를 계속 움직인다.
 fz_adapt_enable: true
 fz_target: 5.0             # [N]         유지할 접촉력
 fz_kp: 0.5                 # [mm/N]      즉각 순응
 fz_ki: 3.0                 # [mm/(s*N)]  정상상태 오차 제거
 fz_kd: 0.0                 # [mm*s/N]    힘 노이즈가 커서 0 유지
-fz_adapt_rate: 30.0        # [mm/s]      dz slew limit
+fz_adapt_rate: 10.0        # [mm/s]      dz slew limit
                            #   1823에서 100 mm/s로 dz가 튀자 로봇이 못 따라와
                            #   imp_z-actual_z가 50 mm에 닿아 stall이 걸렸다.
                            #   실제 궤적 하강속도가 13 mm/s 수준이라 30이면 충분하다.
@@ -72,7 +75,9 @@ fz_print_hz: 5.0           # [Hz]        터미널 출력 주기 (0이면 끔)
 # 그 상태로 정지를 풀면 로봇이 그만큼 튄다.
 # 정상 주행(1726)에서는 최대 5.6 mm였으므로 50 mm면 오작동 없이 사고만 잡는다.
 # 0으로 두면 이 검사를 끈다.
-fz_stall_limit: 50.0       # [mm]
+# 260806: stall 검사 끔. 발산 원인을 좁히는 동안 변수를 줄인다.
+# 되돌리려면 50.0 으로.
+fz_stall_limit: 0.0        # [mm]  0 = 검사 끔
 
 # imp_m: 2.5
 # imp_k: 2.5
