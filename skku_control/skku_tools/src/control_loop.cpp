@@ -5668,6 +5668,15 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
 
     resetDBICControllerState();
 
+    // 260806 접촉 확인 hold 가 쓰는 궤적 시계 전역을 초기화한다.
+    //
+    // spinMotionDBIC 은 t_sec = count*loop_time_ - g_pbic_goal_pause_sec 로
+    // 시계를 만든다. count 는 위에서 0 으로 리셋되지만 pause 는 직전 모션 값이
+    // 남아서, 직전에 접촉 hold 로 5초 멈췄다면 새 모션이 t_sec = -5초 에서
+    // 시작한다. 궤적이 그만큼 제자리에 머무는 동안 로봇은 명령을 향해 가려 하고
+    // Fz 적분도 계속 돈다.
+    resetPbicGoalSpinMotionState();
+
     TaskState current_task_state =
         getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
 
