@@ -1081,6 +1081,24 @@ namespace SKKU
         qddot_filt_dbic_.setZero();
 
         tau_prev_dbic_.setZero();
+
+        // 260806 예전에는 ControlGeneratorDBIC 안의 static 이라 여기서 손댈 수
+        // 없었고, 그래서 모션이 바뀌어도 직전 값이 남아 첫 샘플에 킥이 생겼다.
+        edot_filter_init_dbic_ = false;
+        edot_prev_limited_dbic_.setZero();
+        edot_filt_state_dbic_.setZero();
+
+        ft_valid_count_dbic_ = 0;
+        ft_ready_dbic_ = false;
+
+        fext_filter_init_dbic_ = false;
+        Fext_prev_dbic_.setZero();
+        Fext_filt_dbic_2_.setZero();
+
+        trq_lag_dbic_.reset();
+
+        dbic_rampup_elapsed_ = 0.0f;
+
         //new0401
         g_is_qF_init = false;
         g_qF_prev = Eigen::Quaternionf::Identity();
@@ -1308,9 +1326,6 @@ namespace SKKU
         //   2) deadband
         //   3) low-pass filter
         // ------------------------------------------------------------
-        static bool edot_filter_init = false;
-        static Eigen::Matrix<float, 6, 1> edot_prev_limited = Eigen::Matrix<float, 6, 1>::Zero();
-        static Eigen::Matrix<float, 6, 1> edot_filt_state   = Eigen::Matrix<float, 6, 1>::Zero();
 
         Eigen::Matrix<float, 6, 1> edot_limited = edot_raw;
 
@@ -1342,32 +1357,32 @@ namespace SKKU
                             angular_edot_slew_rate * dt,
                             angular_edot_slew_rate * dt;
 
-        if (!edot_filter_init) {
-            edot_prev_limited = edot_raw;
-            edot_filt_state   = edot_raw;
-            edot_filter_init  = true;
+        if (!edot_filter_init_dbic_) {
+            edot_prev_limited_dbic_ = edot_raw;
+            edot_filt_state_dbic_   = edot_raw;
+            edot_filter_init_dbic_  = true;
         }
 
         for (int i = 0; i < 6; ++i) {
-            float delta = edot_raw(i) - edot_prev_limited(i);
+            float delta = edot_raw(i) - edot_prev_limited_dbic_(i);
 
             if (delta >  edot_delta_limit(i)) delta =  edot_delta_limit(i);
             if (delta < -edot_delta_limit(i)) delta = -edot_delta_limit(i);
 
-            edot_limited(i) = edot_prev_limited(i) + delta;
+            edot_limited(i) = edot_prev_limited_dbic_(i) + delta;
 
             if (std::fabs(edot_limited(i)) < edot_deadband(i)) {
                 edot_limited(i) = 0.0f;
             }
 
-            edot_filt_state(i) =
+            edot_filt_state_dbic_(i) =
                 edot_alpha(i) * edot_limited(i) +
-                (1.0f - edot_alpha(i)) * edot_filt_state(i);
+                (1.0f - edot_alpha(i)) * edot_filt_state_dbic_(i);
 
-            edot(i) = edot_filt_state(i);
+            edot(i) = edot_filt_state_dbic_(i);
         }
 
-        edot_prev_limited = edot_limited;            
+        edot_prev_limited_dbic_ = edot_limited;            
 
  
 
@@ -1479,19 +1494,17 @@ namespace SKKU
             Fft_raw(i) = ft_matched[i];
         }
 
-        static int ft_valid_count = 0;
-        static bool ft_ready = false;
 
         const bool ft_sensor_valid = Fft_raw.cwiseAbs().maxCoeff() > 1.0e-6f;
         if (ft_sensor_valid) {
-            ++ft_valid_count;
+            ++ft_valid_count_dbic_;
         } else {
-            ft_valid_count = 0;
-            ft_ready = false;
+            ft_valid_count_dbic_ = 0;
+            ft_ready_dbic_ = false;
         }
 
-        if (ft_valid_count >= 5) {
-            ft_ready = true;
+        if (ft_valid_count_dbic_ >= 5) {
+            ft_ready_dbic_ = true;
         }
 
         Eigen::Matrix<float, 6, 1> Fext_raw =
@@ -1502,7 +1515,7 @@ namespace SKKU
         // SENSOR 모드는 FT 센서가 5샘플 이상 유효할 때까지 0 을 유지한다(기존 동작).
         // MLP 모드는 센서를 쓰지 않으므로 그 워밍업이 필요 없다.
         if (IMPEDANCE_FORCE_SOURCE == ImpedanceForceSource::SENSOR) {
-            if (ft_ready) {
+            if (ft_ready_dbic_) {
                 Fext_raw = Fft_raw;
             }
         } else {
@@ -1520,13 +1533,8 @@ namespace SKKU
                 Fext_raw = F_estimate(q_in, trq_in);
             } else {
                 // MLP2 는 과거 토크가 필요하다. 이 스레드 전용 이력.
-                static TorqueLagBuffer trq_lag_dbic;
-                static int trq_lag_dbic_motion_id = -1;
-                if (trq_lag_dbic_motion_id != operator_call_count_) {
-                    trq_lag_dbic_motion_id = operator_call_count_;
-                    trq_lag_dbic.reset();
-                }
-                trq_lag_dbic.push(trq_in);
+                // 모션마다의 초기화는 resetDBICControllerState() 가 한다.
+                trq_lag_dbic_.push(trq_in);
 
                 Eigen::Matrix<float, 1, 6> task_in;
                 LPROBOT_POSE fk = Drfl_.fkin(robot_state->actual_joint_position,
@@ -1537,10 +1545,10 @@ namespace SKKU
 
                 Fext_raw = F_estimate2(q_in,
                                        task_in,
-                                       trq_lag_dbic.get(0),
-                                       trq_lag_dbic.get(1),
-                                       trq_lag_dbic.get(3),
-                                       trq_lag_dbic.get(5));
+                                       trq_lag_dbic_.get(0),
+                                       trq_lag_dbic_.get(1),
+                                       trq_lag_dbic_.get(3),
+                                       trq_lag_dbic_.get(5));
             }
         }
 
@@ -1569,14 +1577,11 @@ namespace SKKU
         // --------------------------------------------------
         // spike suppression + LPF
         // --------------------------------------------------
-        static bool fext_filter_init = false;
-        static Eigen::Matrix<float, 6, 1> Fext_prev = Eigen::Matrix<float, 6, 1>::Zero();
-        static Eigen::Matrix<float, 6, 1> Fext_filt = Eigen::Matrix<float, 6, 1>::Zero();
 
-        if (!ft_ready) {
-            fext_filter_init = false;
-            Fext_prev.setZero();
-            Fext_filt.setZero();
+        if (!ft_ready_dbic_) {
+            fext_filter_init_dbic_ = false;
+            Fext_prev_dbic_.setZero();
+            Fext_filt_dbic_2_.setZero();
         }
 
         Eigen::Matrix<float, 6, 1> Fext = Fext_raw;
@@ -1598,20 +1603,20 @@ namespace SKKU
         //                     torque_slew_rate * dt,
         //                     torque_slew_rate * dt;
 
-        // if (!fext_filter_init) {
-        //     Fext_prev = Fext;
-        //     Fext_filt = Fext;
-        //     fext_filter_init = true;
+        // if (!fext_filter_init_dbic_) {
+        //     Fext_prev_dbic_ = Fext;
+        //     Fext_filt_dbic_2_ = Fext;
+        //     fext_filter_init_dbic_ = true;
         // }
 
         // // 1) 프레임 간 급격한 점프 제한
         // for (int i = 0; i < 6; ++i) {
-        //     float delta = Fext(i) - Fext_prev(i);
+        //     float delta = Fext(i) - Fext_prev_dbic_(i);
 
         //     if (delta >  fext_delta_limit(i)) delta =  fext_delta_limit(i);
         //     if (delta < -fext_delta_limit(i)) delta = -fext_delta_limit(i);
 
-        //     Fext(i) = Fext_prev(i) + delta;
+        //     Fext(i) = Fext_prev_dbic_(i) + delta;
 
         //     // 2) 절대 크기 제한
         //     if (Fext(i) >  fext_abs_limit(i)) Fext(i) =  fext_abs_limit(i);
@@ -1620,9 +1625,9 @@ namespace SKKU
 
         // 3) 저역통과필터
         const float alpha_fext = 1.00f; // 작을수록 더 부드러움
-        Fext_filt = alpha_fext * Fext + (1.0f - alpha_fext) * Fext_filt;
+        Fext_filt_dbic_2_ = alpha_fext * Fext + (1.0f - alpha_fext) * Fext_filt_dbic_2_;
 
-        Fext_prev = Fext;
+        Fext_prev_dbic_ = Fext;
 
         //
         Eigen::Matrix<float, 6, 1> Fmass = Md_ * e2dot;
@@ -1630,6 +1635,32 @@ namespace SKKU
         Eigen::Matrix<float, 6, 1> Fdamp   = Bd_ * edot;
         Eigen::Matrix<float, 6, 1> Fdbic   = Fspring + Fdamp - Fe_paper;
         Eigen::Matrix<float, 6, 1> Fimp   = Fspring + Fdamp + Fmass;
+
+        // ------------------------------------------------------------------
+        // 260806 기동 램프업
+        //
+        // 모션 시작 직후 남아 있는 과도(속도 추정 초기값, 필터 워밍업 등)가
+        // 그대로 큰 토크가 되는 것을 막는다. 임피던스 힘에만 걸고 중력/코리올리
+        // 보상에는 걸지 않는다 (거기까지 줄이면 로봇이 주저앉는다).
+        //
+        // 260806/1219 에서는 첫 샘플의 err_dot 39.8 mm/s 가 곧바로 132 N 을
+        // 만들었고 4ms 뒤 559 N 이 됐다. 램프 구간에서는 그 힘이 서서히 실린다.
+        // ------------------------------------------------------------------
+        {
+            constexpr float kDbicRampupSec = 0.3f;
+
+            if (dbic_rampup_elapsed_ < kDbicRampupSec) {
+                dbic_rampup_elapsed_ += dt;
+
+                float ramp = dbic_rampup_elapsed_ / kDbicRampupSec;
+                ramp = std::min(1.0f, std::max(0.0f, ramp));
+
+                // 시작/끝에서 기울기가 0인 smoothstep. 계단이 생기지 않는다.
+                const float ramp_s = ramp * ramp * (3.0f - 2.0f * ramp);
+
+                Fimp *= ramp_s;
+            }
+        }
         // Eigen::Matrix<float, 6, 1> Fext   = -1 * J_inv.transpose()*trq_raw;
         // float Fsesnor[6] = {17.09f, -15.47f, 1.50f, 3.52f , -1.32f, 2.06f};
         // Eigen::Map<const Eigen::Matrix<float, 6, 1>>Fsensoroffset(Fsesnor);
@@ -1643,7 +1674,7 @@ namespace SKKU
         //236.9+126.9
 
         Eigen::Matrix<float, 6, 1> tau =
-        s.J.transpose()*(Fimp+Fext_filt-F_offset)
+        s.J.transpose()*(Fimp+Fext_filt_dbic_2_-F_offset)
         + Nhat;
 
 
@@ -1662,7 +1693,7 @@ namespace SKKU
             F.F_rest[i] = Fspring(i);
             F.F_coriolis[i] = Fdamp(i);
             // F.Fext[i] = s.F_env_on_robot(i);
-            F.Fext[i] = Fext_filt(i);
+            F.Fext[i] = Fext_filt_dbic_2_(i);
             F.Fext_joint[i] = Fext_joint_log(i);
             F.Fimp[i] = Fimp(i);
             errors.e[i] = e(i);

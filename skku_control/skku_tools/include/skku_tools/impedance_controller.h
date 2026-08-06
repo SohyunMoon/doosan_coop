@@ -440,6 +440,34 @@ namespace SKKU {
         bool has_prev_task_vel_dbic_ = false;
         Eigen::Vector3f prev_task_v_dbic_ = Eigen::Vector3f::Zero();
         Eigen::Vector3f prev_task_w_dbic_ = Eigen::Vector3f::Zero();
+        // ==================================================================
+        // 260806 ControlGeneratorDBIC 의 함수 지역 static 을 멤버로 옮긴 것.
+        //
+        // static 이면 resetDBICControllerState() 가 손댈 수 없어서 모션이 바뀌어도
+        // 직전 값이 남는다. 260806/1219 에서 새 모션 첫 샘플의 err_dot 이
+        // 39.8 mm/s 로 시작했고(실제 속도는 0), 그 킥이 발산의 방아쇠였다.
+        // ==================================================================
+        bool edot_filter_init_dbic_ = false;
+        Eigen::Matrix<float, 6, 1> edot_prev_limited_dbic_ =
+            Eigen::Matrix<float, 6, 1>::Zero();
+        Eigen::Matrix<float, 6, 1> edot_filt_state_dbic_ =
+            Eigen::Matrix<float, 6, 1>::Zero();
+
+        int  ft_valid_count_dbic_ = 0;
+        bool ft_ready_dbic_ = false;
+
+        bool fext_filter_init_dbic_ = false;
+        Eigen::Matrix<float, 6, 1> Fext_prev_dbic_ =
+            Eigen::Matrix<float, 6, 1>::Zero();
+        Eigen::Matrix<float, 6, 1> Fext_filt_dbic_2_ =
+            Eigen::Matrix<float, 6, 1>::Zero();
+
+        TorqueLagBuffer trq_lag_dbic_;
+
+        // 모션 시작 후 임피던스 토크를 0에서 서서히 올리는 램프업 [s].
+        // 남아 있는 초기 과도를 덮어 첫 샘플의 킥이 그대로 토크가 되는 것을 막는다.
+        float dbic_rampup_elapsed_ = 0.0f;
+
         bool has_prev_edot_dbic_ = false;
         Eigen::Matrix<float, 6, 1> prev_edot_dbic_ =
         Eigen::Matrix<float, 6, 1>::Zero();
