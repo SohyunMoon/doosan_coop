@@ -3227,12 +3227,11 @@ namespace {
     // 에서 실제로 접촉이 잡힐 때까지 궤적 시간을 멈춰 둔다.
     //
     // 멈추는 방식이라 hold 를 길게 잡아둘 필요가 없다. 접촉이 확인되면
-    // (|Fz| >= kContactForceN 이 kContactHoldSec 동안 유지) 바로 진행한다.
-    // 확인이 안 되면 kContactWaitMaxSec 까지만 기다리고 경고 후 진행한다.
+    // (|Fz| >= contact_force_n_ 이 contact_hold_sec_ 동안 유지) 바로 진행한다.
+    // 확인이 안 되면 contact_wait_max_sec_ 까지만 기다리고 경고 후 진행한다.
     // ------------------------------------------------------------------
-    constexpr double kContactForceN = 5.0;      // 접촉으로 볼 |Fz| [N]
-    constexpr double kContactHoldSec = 0.2;     // 그 힘을 유지해야 하는 시간 [s]
-    constexpr double kContactWaitMaxSec = 15.0; // 최대 대기 [s] (안전장치)
+    // 임계값은 PBIC 멤버(contact_force_n_ / contact_hold_sec_ /
+    // contact_wait_max_sec_)로 옮겨 yaml 에서 조정한다.
 
     double g_pbic_goal_pause_sec = 0.0;    // 누적 정지 시간
     double g_contact_ok_sec = 0.0;         // 접촉 조건이 연속으로 유지된 시간
@@ -6192,43 +6191,43 @@ bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state,
         // ------------------------------------------------------------------
         // 260805 접촉 확인 hold
         //   제자리 정지 + DRAW 구간에서는 |Fz| 가 기준을 넘긴 상태로
-        //   kContactHoldSec 유지될 때까지 궤적 시간을 진행시키지 않는다.
+        //   contact_hold_sec_ 유지될 때까지 궤적 시간을 진행시키지 않는다.
         //   그동안 Fz 보정은 계속 돌기 때문에 로봇은 표면을 찾아 계속 내려간다.
         // ------------------------------------------------------------------
         if (ref_task.contact_hold) {
             const double fz = std::fabs(static_cast<double>(F.Fext[2]));
 
-            if (fz >= kContactForceN) {
+            if (fz >= contact_force_n_) {
                 g_contact_ok_sec += dt_sec;
             } else {
                 g_contact_ok_sec = 0.0;
             }
 
-            if (g_contact_ok_sec < kContactHoldSec &&
-                g_contact_wait_sec < kContactWaitMaxSec) {
+            if (g_contact_ok_sec < contact_hold_sec_ &&
+                g_contact_wait_sec < contact_wait_max_sec_) {
 
                 // 아직 접촉 미확인: 시계를 멈춘다 (elapsed 증가분을 pause 로 상쇄)
                 g_pbic_goal_pause_sec += dt_sec;
                 g_contact_wait_sec += dt_sec;
-            } else if (g_contact_ok_sec >= kContactHoldSec) {
+            } else if (g_contact_ok_sec >= contact_hold_sec_) {
                 // 접촉 확인: 남은 hold 를 기다리지 않고 바로 다음 구간으로 넘어간다.
                 // (시계를 앞으로 당겨서 이 hold 구간을 소진시킨다)
                 if (ref_task.segment_remaining_sec > 0.0) {
                     ROS_INFO("[PBIC CONTACT] 접촉 확인 (|Fz|=%.2f N, %.0fms 유지). "
                              "남은 hold %.2fs 를 건너뜁니다.",
-                             fz, kContactHoldSec * 1000.0,
+                             fz, contact_hold_sec_ * 1000.0,
                              ref_task.segment_remaining_sec);
 
                     g_pbic_goal_pause_sec -= ref_task.segment_remaining_sec;
                 }
                 g_contact_ok_sec = 0.0;
                 g_contact_wait_sec = 0.0;
-            } else if (g_contact_wait_sec >= kContactWaitMaxSec) {
+            } else if (g_contact_wait_sec >= contact_wait_max_sec_) {
                 static int contact_timeout_warn = 0;
                 if ((contact_timeout_warn++ % 200) == 0) {
                     ROS_WARN("[PBIC CONTACT] %.1fs 안에 접촉(|Fz| >= %.1f N)을 "
                              "확인하지 못해 그대로 진행합니다. 현재 |Fz|=%.2f N",
-                             kContactWaitMaxSec, kContactForceN, fz);
+                             contact_wait_max_sec_, contact_force_n_, fz);
                 }
             }
         } else {
@@ -6625,18 +6624,18 @@ bool ControlLoop::spinMotionDBIC(const LPRT_OUTPUT_DATA_LIST& robot_state,
 
         // 접촉 확인 hold: 접촉이 잡힐 때까지 궤적 시계를 멈춘다
         if (ref_task.contact_hold) {
-            if (fz_mag >= static_cast<float>(kContactForceN)) {
+            if (fz_mag >= static_cast<float>(contact_force_n_)) {
                 g_contact_ok_sec += dt_sec;
             } else {
                 g_contact_ok_sec = 0.0;
             }
 
-            if (g_contact_ok_sec < kContactHoldSec &&
-                g_contact_wait_sec < kContactWaitMaxSec) {
+            if (g_contact_ok_sec < contact_hold_sec_ &&
+                g_contact_wait_sec < contact_wait_max_sec_) {
 
                 g_pbic_goal_pause_sec += dt_sec;
                 g_contact_wait_sec += dt_sec;
-            } else if (g_contact_ok_sec >= kContactHoldSec) {
+            } else if (g_contact_ok_sec >= contact_hold_sec_) {
                 if (ref_task.segment_remaining_sec > 0.0) {
                     ROS_INFO("[DBIC CONTACT] 접촉 확인 (|Fz|=%.2f N). "
                              "남은 hold %.2fs 를 건너뜁니다.",
@@ -6646,12 +6645,12 @@ bool ControlLoop::spinMotionDBIC(const LPRT_OUTPUT_DATA_LIST& robot_state,
                 }
                 g_contact_ok_sec = 0.0;
                 g_contact_wait_sec = 0.0;
-            } else if (g_contact_wait_sec >= kContactWaitMaxSec) {
+            } else if (g_contact_wait_sec >= contact_wait_max_sec_) {
                 static int dbic_contact_warn = 0;
                 if ((dbic_contact_warn++ % 200) == 0) {
                     ROS_WARN("[DBIC CONTACT] %.1fs 안에 접촉을 확인하지 못해 "
                              "그대로 진행합니다. |Fz|=%.2f N",
-                             kContactWaitMaxSec, fz_mag);
+                             contact_wait_max_sec_, fz_mag);
                 }
             }
         } else {

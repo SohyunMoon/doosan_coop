@@ -1,5 +1,5 @@
 
-imp_m: 2.0
+imp_m: 2.5
 imp_k: 2.5
 
 # 임피던스 모델 축별 스케일. 축 순서: X, Y, Z, Rx, Ry, Rz
@@ -13,7 +13,7 @@ imp_k: 2.5
 imp_k_scale:        [1.0, 1.0, 1.0, 75.0, 75.0, 75.0]
 imp_m_scale:        [1.0, 1.0, 1.0, 1.0, 1.0,  1.0]
 # imp_damping_ratio:  [8.0, 8.0, 8.0, 8.0, 8.0,  8.0]
-imp_damping_ratio:  [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+imp_damping_ratio:  [1.0, 1.0, 1.0, 2.0, 2.0, 2.0]
 
 # 0804 Fz adaptive z-reference shaping (PBIC quaternion 모드 전용)
 #   들어온 z reference가 무엇이든 |Fz|를 fz_target에 유지하는 것만 목표.
@@ -57,6 +57,18 @@ imp_damping_ratio:  [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 # DBIC 기동 발산을 진단하는 동안 변수를 줄이기 위해 비활성화한다.
 # 켜면 |Fz| 를 fz_target 에 맞추려고 명령 z 를 계속 움직인다.
 fz_adapt_enable: true
+# ------------------------------------------------------------------
+# 접촉 확인 hold: 리프트로 내려온 직후 DRAW hold 를 시간이 아니라 접촉으로 끝낸다.
+#   |Fz| >= contact_force_n 이 contact_hold_sec 연속 유지되면 남은 hold 를 건너뛴다.
+#   확인 못 하면 contact_wait_max_sec 까지만 기다리고 경고 후 진행한다.
+#
+# contact_force_n 을 fz_target 과 비슷하게 두면 안 된다. 260806/1558 에서
+# |Fz| 가 3.8~5.5 N 을 오가는데 임계값이 5.0 이라 연속 조건이 한 번도 성립하지
+# 않았고, 매 접촉마다 15초를 다 기다렸다. 목표 접촉력보다 넉넉히 낮게 잡을 것.
+contact_force_n: 2.0        # [N]
+contact_hold_sec: 0.2       # [s]
+contact_wait_max_sec: 5.0   # [s]
+
 fz_target: 5.0             # [N]         유지할 접촉력
 fz_kp: 0.5                 # [mm/N]      즉각 순응
 fz_ki: 3.0                 # [mm/(s*N)]  정상상태 오차 제거

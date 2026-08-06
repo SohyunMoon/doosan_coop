@@ -370,6 +370,19 @@ namespace SKKU {
         // 무한정 감긴다. imp_z와 실제 TCP z의 차이로 그 상태를 잡는다.
         float fz_stall_limit_ = 50.0f;        // [mm]    0이면 검사 끔
 
+        // 260806 접촉 확인 hold (하강 직후 DRAW hold 를 시간이 아닌 접촉으로 끝낸다)
+        //   contact_force_n_ : 접촉으로 볼 |Fz| [N]
+        //   contact_hold_sec_: 그 힘을 연속으로 유지해야 하는 시간 [s]
+        //   contact_wait_max_sec_: 확인 실패 시 최대 대기 [s]
+        //
+        // contact_force_n_ 을 실제 접촉력과 비슷하게 두면 노이즈로 임계값을
+        // 오르내려 연속 조건이 성립하지 않는다. 260806/1558 에서 |Fz| 가
+        // 3.8~5.5 N 을 오가며 5.0 조건을 못 채워 매번 15초를 다 기다렸다.
+        // 접촉 판정은 목표 접촉력보다 넉넉히 낮게 잡을 것.
+        float contact_force_n_ = 2.0f;
+        float contact_hold_sec_ = 0.2f;
+        float contact_wait_max_sec_ = 5.0f;
+
         float dt;
   
         Prev prev;

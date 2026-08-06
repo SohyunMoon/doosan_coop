@@ -810,6 +810,9 @@ namespace SKKU
         if (config["fz_adapt_enable"]) {
             fz_adapt_enable_ = config["fz_adapt_enable"].as<bool>();
         }
+        loadOptFloat("contact_force_n", contact_force_n_);
+        loadOptFloat("contact_hold_sec", contact_hold_sec_);
+        loadOptFloat("contact_wait_max_sec", contact_wait_max_sec_);
         loadOptFloat("fz_target", fz_target_);
         loadOptFloat("fz_kp", fz_kp_);
         loadOptFloat("fz_ki", fz_ki_);
