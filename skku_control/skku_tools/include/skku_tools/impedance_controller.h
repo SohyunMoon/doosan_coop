@@ -215,7 +215,18 @@ namespace SKKU {
         MLP2   = 2,
     };
 
-    constexpr ImpedanceForceSource IMPEDANCE_FORCE_SOURCE = ImpedanceForceSource::SENSOR;
+    // 260805: MLP1 으로 전환. 되돌리려면 SENSOR 로 바꾸면 된다.
+    //
+    // 주의: 260805/1937 데이터 기준으로 두 모델 다 Fz 에 큰 상수 offset 이 있다.
+    //   MLP1  Fz  MAE 8.56 N,  bias -8.02 N   (오차의 대부분이 offset)
+    //   MLP2  Fz  MAE 10.29 N, bias -9.95 N
+    // fz_target 이 5 N 인데 offset 이 그보다 크므로, 접촉 판정과 Fz 보정이
+    // 그대로는 맞지 않는다. 실기 투입 전에 영점을 확인할 것.
+    // (analyze_mlp_models.py 로 F_mlp.txt 와 sensor_FT_matched.txt 를 비교)
+    //
+    // MLP1 을 고른 이유: 전체 평균은 MLP2 가 근소하게 낫지만(33.2% vs 34.1%),
+    // 접촉 제어에서 가장 중요한 Fz 는 MLP1 이 16.8% 낫다.
+    constexpr ImpedanceForceSource IMPEDANCE_FORCE_SOURCE = ImpedanceForceSource::MLP1;
 
     class PBIC{
     public:

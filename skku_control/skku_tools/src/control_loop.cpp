@@ -3219,10 +3219,32 @@ namespace {
     bool g_pbic_goal_motion_failed = false;
     double g_pbic_goal_elapsed_sec = 0.0;
 
+    // ------------------------------------------------------------------
+    // 260805 접촉 확인 hold
+    //
+    // 리프트로 띄웠다가 다시 내려오는 구간은 "리프트한 만큼"만 내려간다.
+    // 표면이 그보다 낮으면 접촉 없이 획이 시작되므로, 하강 직후의 DRAW hold
+    // 에서 실제로 접촉이 잡힐 때까지 궤적 시간을 멈춰 둔다.
+    //
+    // 멈추는 방식이라 hold 를 길게 잡아둘 필요가 없다. 접촉이 확인되면
+    // (|Fz| >= kContactForceN 이 kContactHoldSec 동안 유지) 바로 진행한다.
+    // 확인이 안 되면 kContactWaitMaxSec 까지만 기다리고 경고 후 진행한다.
+    // ------------------------------------------------------------------
+    constexpr double kContactForceN = 5.0;      // 접촉으로 볼 |Fz| [N]
+    constexpr double kContactHoldSec = 0.2;     // 그 힘을 유지해야 하는 시간 [s]
+    constexpr double kContactWaitMaxSec = 15.0; // 최대 대기 [s] (안전장치)
+
+    double g_pbic_goal_pause_sec = 0.0;    // 누적 정지 시간
+    double g_contact_ok_sec = 0.0;         // 접촉 조건이 연속으로 유지된 시간
+    double g_contact_wait_sec = 0.0;       // 이번 hold 에서 기다린 시간
+
     void resetPbicGoalSpinMotionState() {
         g_pbic_goal_motion_finished = false;
         g_pbic_goal_motion_failed = false;
         g_pbic_goal_elapsed_sec = 0.0;
+        g_pbic_goal_pause_sec = 0.0;
+        g_contact_ok_sec = 0.0;
+        g_contact_wait_sec = 0.0;
     }    
     //new0412
     // void fillEulerDummyForIK(const SKKU::Trajectory& src_quat, SKKU::Trajectory& dst_euler) {
@@ -3613,11 +3635,8 @@ void TrajectoryGen::initPBICWaypointGoal(
             "Waypoint goal requires at least two target points.");
     }
 
-    const double total_time =
-        msg.points.back().time_from_start.toSec();
-
-    // 입력 waypoint 중 마지막 waypoint를 제외한 점에서 1초씩 hold
-    // 예: 입력 waypoint가 4개이면 W1, W2, W3에서 총 3초 hold
+    // 입력 waypoint 중 마지막 waypoint를 제외한 점에서 hold
+    // 예: 입력 waypoint가 4개이면 W1, W2, W3에서 hold
     const size_t intermediate_hold_count =
         msg.points.size() - 1;
 
@@ -3630,14 +3649,59 @@ void TrajectoryGen::initPBICWaypointGoal(
         intermediate_hold_total +
         kGoalHoldTimeSec;
 
-    if (!std::isfinite(total_time) ||
-        total_time <= total_reserved_hold) {
+    // ------------------------------------------------------------------
+    // 260805 구간별 시간 지정
+    //
+    // 클라이언트가 각 점의 time_from_start 에 "그 점까지의 누적 이동시간"을
+    // 채워 보내면, 구간마다 그 시간을 그대로 쓴다. hold 는 포함하지 않는다.
+    // 획 / 리프트 / 이동 / 접근에 서로 다른 시간을 주려면 이 방식이어야 한다.
+    //
+    // 옛 클라이언트는 중간 점을 전부 0 으로 채우고 마지막 점에만 총 시간을
+    // 넣는다. 그 경우는 예전처럼 (총시간 - hold)를 구간 수로 균등 분배한다.
+    //
+    // 판별: 모든 점의 시간이 0 보다 크고 단조 증가하면 구간별 지정으로 본다.
+    // ------------------------------------------------------------------
+    std::vector<double> cumulative_travel(msg.points.size(), 0.0);
+    bool per_segment_times = true;
+    double prev_t = 0.0;
 
-        throw std::invalid_argument(
-            "Waypoint goal total time must be greater than "
-            "intermediate waypoint holds plus final hold.");
+    for (size_t i = 0; i < msg.points.size(); ++i) {
+        const double ti = msg.points[i].time_from_start.toSec();
+
+        if (!std::isfinite(ti) || ti <= prev_t) {
+            per_segment_times = false;
+            break;
+        }
+
+        cumulative_travel[i] = ti;
+        prev_t = ti;
     }
-    
+
+    double total_time = 0.0;
+
+    if (per_segment_times) {
+        // 구간별 시간의 합이 순수 이동시간이고, hold 는 제어기가 얹는다.
+        total_time = cumulative_travel.back() + total_reserved_hold;
+
+        ROS_INFO("[PBIC WAYPOINT] 구간별 시간 지정 사용: "
+                 "이동 %.2fs + hold %.2fs = 총 %.2fs",
+                 cumulative_travel.back(), total_reserved_hold, total_time);
+    } else {
+        // 옛 방식: 마지막 점의 시간이 hold 를 포함한 전체 명령시간이다.
+        total_time = msg.points.back().time_from_start.toSec();
+
+        if (!std::isfinite(total_time) ||
+            total_time <= total_reserved_hold) {
+
+            throw std::invalid_argument(
+                "Waypoint goal total time must be greater than "
+                "intermediate waypoint holds plus final hold.");
+        }
+
+        ROS_WARN("[PBIC WAYPOINT] 구간별 시간이 없어 균등 분배로 처리합니다 "
+                 "(중간 점의 time_from_start 가 0이거나 단조 증가가 아님).");
+    }
+
     dbic_mode_ = DBICMode::kWaypointGoal;
     dbic_path_samples_.clear();
 
@@ -3771,11 +3835,29 @@ void TrajectoryGen::initPBICWaypointGoal(
     std::vector<double> segment_times(
         segment_count, 0.0);
 
+    // 260805: 길이 비례 배분을 버렸다.
+    //
+    // 길이 비례로 나누면 클라이언트가 지정한 구간 시간이 지켜지지 않는다.
+    // 접근 구간(현재 위치 -> 첫 waypoint) 길이가 로봇이 어디 있느냐에 따라 매번
+    // 달라지므로, 같은 도형인데도 획 속도가 실행할 때마다 바뀌었다.
+    // (실측: 100mm 획이 접근 거리에 따라 0.63 ~ 1.22 s 사이에서 흔들림)
+    //
+    //   구간별 지정이 있으면 : 그 시간을 그대로 쓴다 (획/리프트/이동/접근 각각 다름)
+    //   없으면(옛 클라이언트): 남은 이동시간을 구간 수로 균등 분배
+    (void)total_length;
+
+    // 구간 i 는 [현재위치, W1, ..., Wn] 의 i -> i+1 이다.
+    // cumulative_travel[i] 는 Wi+1 까지의 누적 이동시간이므로 차분이 곧 구간 시간이다.
     for (size_t i = 0; i < segment_count; ++i) {
-        segment_times[i] =
-            travel_time *
-            segment_lengths[i] /
-            total_length;
+        if (per_segment_times) {
+            const double t_end = cumulative_travel[i];
+            const double t_start = (i == 0) ? 0.0 : cumulative_travel[i - 1];
+            segment_times[i] = t_end - t_start;
+        } else {
+            segment_times[i] =
+                travel_time /
+                static_cast<double>(segment_count);
+        }
 
         if (segment_times[i] < kMinSegmentTimeSec) {
             throw std::invalid_argument(
@@ -4092,6 +4174,17 @@ TaskRef TrajectoryGen::samplePBICWaypointGoal(
         (k + 1 < dbic_waypoint_draw_modes_.size())
             ? dbic_waypoint_draw_modes_[k + 1]
             : true;
+
+    // 260805 제자리 정지 + DRAW 구간이면 접촉 확인 대상이다.
+    // hold 는 같은 pose 를 두 시간에 넣어 만들었으므로 위치가 같은 구간이 곧 hold 다.
+    ref.contact_hold =
+        ref.draw_mode &&
+        (k + 1 < dbic_waypoint_positions_.size()) &&
+        ((dbic_waypoint_positions_[k + 1] -
+          dbic_waypoint_positions_[k]).norm() < 1e-6f);
+
+    ref.segment_remaining_sec =
+        std::max(0.0, dbic_waypoint_times_[k + 1] - t);
 
     const double segment_time =
         dbic_waypoint_times_[k + 1] -
@@ -6025,7 +6118,8 @@ bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state,
 //
 
     if (use_dbic_nominal_for_pbic_goal) {
-        const double t_sec  = g_pbic_goal_elapsed_sec;   // wall-clock 기준
+        // 접촉 확인 hold 동안 멈춰 있던 시간만큼 궤적 시계를 늦춘다.
+        const double t_sec  = g_pbic_goal_elapsed_sec - g_pbic_goal_pause_sec;
         const double dt_sec = static_cast<double>(loop_time_) * 1e-3;
 //waypoint 추가로 인한 코드 수정 0730
         // TaskRef ref_tcp  = trajectory_gen_.sampleDBICGoal(t_sec, dt_sec);
@@ -6064,6 +6158,53 @@ bool ControlLoop::spinMotion(const LPRT_OUTPUT_DATA_LIST& robot_state,
 
         // 0804 그리기/위치정렬 구간 -> MotionGenerator의 Fz 보정 게이팅
         trajectory.draw_mode = ref_task.draw_mode;
+
+        // ------------------------------------------------------------------
+        // 260805 접촉 확인 hold
+        //   제자리 정지 + DRAW 구간에서는 |Fz| 가 기준을 넘긴 상태로
+        //   kContactHoldSec 유지될 때까지 궤적 시간을 진행시키지 않는다.
+        //   그동안 Fz 보정은 계속 돌기 때문에 로봇은 표면을 찾아 계속 내려간다.
+        // ------------------------------------------------------------------
+        if (ref_task.contact_hold) {
+            const double fz = std::fabs(static_cast<double>(F.Fext[2]));
+
+            if (fz >= kContactForceN) {
+                g_contact_ok_sec += dt_sec;
+            } else {
+                g_contact_ok_sec = 0.0;
+            }
+
+            if (g_contact_ok_sec < kContactHoldSec &&
+                g_contact_wait_sec < kContactWaitMaxSec) {
+
+                // 아직 접촉 미확인: 시계를 멈춘다 (elapsed 증가분을 pause 로 상쇄)
+                g_pbic_goal_pause_sec += dt_sec;
+                g_contact_wait_sec += dt_sec;
+            } else if (g_contact_ok_sec >= kContactHoldSec) {
+                // 접촉 확인: 남은 hold 를 기다리지 않고 바로 다음 구간으로 넘어간다.
+                // (시계를 앞으로 당겨서 이 hold 구간을 소진시킨다)
+                if (ref_task.segment_remaining_sec > 0.0) {
+                    ROS_INFO("[PBIC CONTACT] 접촉 확인 (|Fz|=%.2f N, %.0fms 유지). "
+                             "남은 hold %.2fs 를 건너뜁니다.",
+                             fz, kContactHoldSec * 1000.0,
+                             ref_task.segment_remaining_sec);
+
+                    g_pbic_goal_pause_sec -= ref_task.segment_remaining_sec;
+                }
+                g_contact_ok_sec = 0.0;
+                g_contact_wait_sec = 0.0;
+            } else if (g_contact_wait_sec >= kContactWaitMaxSec) {
+                static int contact_timeout_warn = 0;
+                if ((contact_timeout_warn++ % 200) == 0) {
+                    ROS_WARN("[PBIC CONTACT] %.1fs 안에 접촉(|Fz| >= %.1f N)을 "
+                             "확인하지 못해 그대로 진행합니다. 현재 |Fz|=%.2f N",
+                             kContactWaitMaxSec, kContactForceN, fz);
+                }
+            }
+        } else {
+            g_contact_ok_sec = 0.0;
+            g_contact_wait_sec = 0.0;
+        }
 
         trajectory.vel_d[0] = ref_task.v_d(0) * 1000.0f;
         trajectory.vel_d[1] = ref_task.v_d(1) * 1000.0f;

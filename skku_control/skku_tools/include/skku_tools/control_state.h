@@ -296,6 +296,15 @@ struct TaskRef {
     // 0804 현재 구간이 그리기 구간인가.
     // false면 위치정렬 구간이라 접촉력 기반 Z reference 보정을 멈춘다.
     bool draw_mode = true;
+
+    // 260805 지금이 "제자리 정지 + DRAW" 구간인가.
+    // 리프트로 내려온 직후 접촉을 만드는 구간이 여기 해당한다.
+    // 제어 루프는 이 구간에서 접촉이 확인될 때까지 궤적 시간을 진행시키지 않는다.
+    bool contact_hold = false;
+
+    // 지금 구간이 끝날 때까지 남은 시간 [s].
+    // 접촉이 확인되면 hold 의 남은 시간을 건너뛰는 데 쓴다.
+    double segment_remaining_sec = 0.0;
 };
 
 struct TaskState {
