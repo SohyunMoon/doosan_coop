@@ -251,8 +251,8 @@ namespace SKKU {
     };
 
     constexpr MotionReferenceSource MOTION_REFERENCE_SOURCE =
-        // MotionReferenceSource::IMPEDANCE;
-        MotionReferenceSource::TRAJECTORY;
+        MotionReferenceSource::IMPEDANCE;
+        // MotionReferenceSource::TRAJECTORY;
 
     class PBIC{
     public:
