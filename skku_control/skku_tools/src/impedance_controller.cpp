@@ -2865,20 +2865,32 @@ namespace SKKU
         // ------------------------------------------------------------
         // Quaternion-based PBIC outer impedance model
         // ------------------------------------------------------------
-        rungeKuttaPoseQuaternion(imp,
-                                p_d,
-                                v_d,
-                                a_d,
-                                q_d,
-                                w_d,
-                                alpha_d,
-                                F_ext,
-                                M,
-                                B,
-                                K,
-                                M_inv,
-                                dt,
-                                n);
+        if (MOTION_REFERENCE_SOURCE == MotionReferenceSource::IMPEDANCE) {
+            rungeKuttaPoseQuaternion(imp,
+                                    p_d,
+                                    v_d,
+                                    a_d,
+                                    q_d,
+                                    w_d,
+                                    alpha_d,
+                                    F_ext,
+                                    M,
+                                    B,
+                                    K,
+                                    M_inv,
+                                    dt,
+                                    n);
+        } else {
+            // 위치제어 모드: 임피던스 모델을 적분하지 않고 명령 궤적을 그대로 목표로 둔다.
+            // 아래 IK 는 imp.p_m / imp.pos_m 을 읽으므로 여기서 채워 주면
+            // 나머지 경로(ZYZ 변환, IK, 분기 선택)는 손대지 않아도 된다.
+            imp.p_m     = p_d;
+            imp.v_m     = v_d;
+            imp.a_m     = a_d;
+            imp.q_m     = q_d;
+            imp.w_m     = w_d;
+            imp.alpha_m = alpha_d;
+        }
         //log
         Eigen::Matrix<float, 6, 1> imp_task_pose_log;
         Eigen::Matrix<float, 6, 1> imp_task_vel_log;

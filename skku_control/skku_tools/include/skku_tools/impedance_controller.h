@@ -228,6 +228,31 @@ namespace SKKU {
     // 접촉 제어에서 가장 중요한 Fz 는 MLP1 이 16.8% 낫다.
     constexpr ImpedanceForceSource IMPEDANCE_FORCE_SOURCE = ImpedanceForceSource::MLP1;
 
+    // ==================================================================================
+    // IK 목표를 어디서 가져올지 고르는 스위치. 여기 한 곳에서만 바꾼다.
+    //
+    //   IMPEDANCE  : 외력을 받아 임피던스 모델(M/B/K)을 rungeKutta 로 적분한 결과를
+    //                IK 목표로 쓴다. 기존 동작이고, 접촉하면 순응한다.
+    //   TRAJECTORY : 임피던스 모델을 건너뛰고 명령 궤적을 그대로 IK 한다.
+    //                순수 위치제어. 외력에 순응하지 않는다.
+    //
+    // TRAJECTORY 에서는 rungeKuttaPoseQuaternion() 을 호출하지 않으므로
+    // M/B/K 게인과 외력이 목표 위치에 전혀 영향을 주지 않는다.
+    // (외력은 여전히 읽고 로그에도 남지만 목표를 바꾸지 않는다)
+    //
+    // 주의: 위치제어는 접촉해도 물러나지 않는다. 표면에 닿은 상태에서 명령이
+    //       더 내려가면 힘이 그대로 올라간다. 그리기 실험에 쓸 때는
+    //       fz_adapt_enable 로 z 보정을 켜 두거나, z 를 넉넉히 띄워서 시작할 것.
+    //       (Fz 적응 보정은 p_d 단계에 걸리므로 이 모드에서도 살아 있다)
+    // ==================================================================================
+    enum class MotionReferenceSource {
+        IMPEDANCE = 0,
+        TRAJECTORY = 1,
+    };
+
+    constexpr MotionReferenceSource MOTION_REFERENCE_SOURCE =
+        MotionReferenceSource::IMPEDANCE;
+
     class PBIC{
     public:
         PBIC(u_int64_t loop_time, DRAFramework::CDRFLEx& Drfl);
