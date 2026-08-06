@@ -464,9 +464,16 @@ namespace SKKU {
 
         TorqueLagBuffer trq_lag_dbic_;
 
-        // 모션 시작 후 임피던스 토크를 0에서 서서히 올리는 램프업 [s].
-        // 남아 있는 초기 과도를 덮어 첫 샘플의 킥이 그대로 토크가 되는 것을 막는다.
-        float dbic_rampup_elapsed_ = 0.0f;
+        // 모션 시작 직후 속도 오차(edot)를 0으로 두는 샘플 수 카운터.
+        //
+        // 첫 몇 샘플은 태스크 속도 추정이 아직 자리를 못 잡아 실제로는 정지
+        // 상태인데도 edot 이 크게 나온다(260806/1427 에서 57 mm/s). 그 값이
+        // 그대로 B 항이 되어 로봇을 밀어낸다.
+        //
+        // 임피던스 힘 전체를 램프하는 방식은 쓰지 않는다. K 항까지 같이 줄어서
+        // 위치 유지 능력이 사라지고, 그동안 로봇이 흘러가 오차가 커진 뒤
+        // 램프가 올라오면서 더 크게 튄다(1427 에서 실제로 그렇게 됐다).
+        int dbic_edot_warmup_ = 0;
 
         bool has_prev_edot_dbic_ = false;
         Eigen::Matrix<float, 6, 1> prev_edot_dbic_ =

@@ -1097,7 +1097,7 @@ namespace SKKU
 
         trq_lag_dbic_.reset();
 
-        dbic_rampup_elapsed_ = 0.0f;
+        dbic_edot_warmup_ = 0;
 
         //new0401
         g_is_qF_init = false;
@@ -1318,6 +1318,26 @@ namespace SKKU
 
         e.tail<3>()    = quatLogError(ref.q_d, s.q);
         edot_raw.tail<3>() = ref.w_d - s.w;
+
+        // ------------------------------------------------------------------
+        // 260806 기동 직후 속도 오차 무시
+        //
+        // 모션 시작 첫 몇 샘플은 태스크 속도 추정이 자리를 못 잡아, 로봇이
+        // 실제로는 정지해 있는데도 edot 이 크게 나온다. 1427 에서 첫 샘플
+        // edot_z 가 57 mm/s 였고(실제 속도 0), 이게 B 항으로 들어가 로봇을
+        // 밀어냈다. 그 뒤 오차가 커지며 진동이 발산했다.
+        //
+        // 위치 오차 e 는 건드리지 않는다. K 항은 처음부터 살아 있어야
+        // 로봇이 제자리를 잡는다.
+        // ------------------------------------------------------------------
+        {
+            constexpr int kEdotWarmupSamples = 5;   // 약 20 ms @ 250 Hz
+
+            if (dbic_edot_warmup_ < kEdotWarmupSamples) {
+                ++dbic_edot_warmup_;
+                edot_raw.setZero();
+            }
+        }
         // new0330 Debug logs for edot decomposition
 
         // ------------------------------------------------------------
@@ -1636,31 +1656,6 @@ namespace SKKU
         Eigen::Matrix<float, 6, 1> Fdbic   = Fspring + Fdamp - Fe_paper;
         Eigen::Matrix<float, 6, 1> Fimp   = Fspring + Fdamp + Fmass;
 
-        // ------------------------------------------------------------------
-        // 260806 기동 램프업
-        //
-        // 모션 시작 직후 남아 있는 과도(속도 추정 초기값, 필터 워밍업 등)가
-        // 그대로 큰 토크가 되는 것을 막는다. 임피던스 힘에만 걸고 중력/코리올리
-        // 보상에는 걸지 않는다 (거기까지 줄이면 로봇이 주저앉는다).
-        //
-        // 260806/1219 에서는 첫 샘플의 err_dot 39.8 mm/s 가 곧바로 132 N 을
-        // 만들었고 4ms 뒤 559 N 이 됐다. 램프 구간에서는 그 힘이 서서히 실린다.
-        // ------------------------------------------------------------------
-        {
-            constexpr float kDbicRampupSec = 0.3f;
-
-            if (dbic_rampup_elapsed_ < kDbicRampupSec) {
-                dbic_rampup_elapsed_ += dt;
-
-                float ramp = dbic_rampup_elapsed_ / kDbicRampupSec;
-                ramp = std::min(1.0f, std::max(0.0f, ramp));
-
-                // 시작/끝에서 기울기가 0인 smoothstep. 계단이 생기지 않는다.
-                const float ramp_s = ramp * ramp * (3.0f - 2.0f * ramp);
-
-                Fimp *= ramp_s;
-            }
-        }
         // Eigen::Matrix<float, 6, 1> Fext   = -1 * J_inv.transpose()*trq_raw;
         // float Fsesnor[6] = {17.09f, -15.47f, 1.50f, 3.52f , -1.32f, 2.06f};
         // Eigen::Map<const Eigen::Matrix<float, 6, 1>>Fsensoroffset(Fsesnor);
