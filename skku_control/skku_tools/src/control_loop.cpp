@@ -5659,7 +5659,16 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
     TaskState current_task_state =
         getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
 
-    trajectory_gen_.initDBICGoal(current_task_state.p, current_task_state.q, msg);
+    // 260806 DBIC 에서도 도형(여러 waypoint)을 받는다.
+    // PBIC 쪽(runPBICGoal)과 같은 규칙: 점이 하나면 단일 goal, 둘 이상이면 waypoint goal.
+    // waypoint goal 이어야 구간별 시간 / draw_mode / 접촉 hold 가 붙는다.
+    if (msg.points.size() == 1) {
+        trajectory_gen_.initDBICGoal(
+            current_task_state.p, current_task_state.q, msg);
+    } else {
+        trajectory_gen_.initPBICWaypointGoal(
+            current_task_state.p, current_task_state.q, msg);
+    }
 //0727
     if (!restartRtControlIfNeeded()) {
         ROS_ERROR("DBIC aborted because RT control could not be restarted.");
@@ -6474,11 +6483,18 @@ bool ControlLoop::spinMotionDBIC(SKKU::Duration time_step,
                                  TaskRef& ref_task) {
     (void)time_step;
 
-    const double t_sec = static_cast<double>(count) * loop_time_ * 1e-3;
     const double dt_sec = static_cast<double>(loop_time_) * 1e-3;
+
+    // 접촉 확인 hold 동안 멈춰 있던 시간만큼 궤적 시계를 늦춘다 (PBIC 와 같은 방식).
+    const double t_sec =
+        static_cast<double>(count) * loop_time_ * 1e-3 - g_pbic_goal_pause_sec;
 
     if (trajectory_gen_.dbic_mode_ == TrajectoryGen::DBICMode::kGoal) {
         ref_tcp = trajectory_gen_.sampleDBICGoal(t_sec, dt_sec);
+    } else if (trajectory_gen_.dbic_mode_ ==
+               TrajectoryGen::DBICMode::kWaypointGoal) {
+        // 260806 DBIC 에서도 도형을 그린다.
+        ref_tcp = trajectory_gen_.samplePBICWaypointGoal(t_sec, dt_sec);
     } else if (trajectory_gen_.dbic_mode_ == TrajectoryGen::DBICMode::kPath) {
         ref_tcp = trajectory_gen_.sampleDBICPath(static_cast<size_t>(count));
     } else {
@@ -6486,6 +6502,112 @@ bool ControlLoop::spinMotionDBIC(SKKU::Duration time_step,
     }
 
     ref_task = convertRefToTaskPoint(ref_tcp);
+
+    // ------------------------------------------------------------------
+    // 260806 DBIC 용 Fz 적응 z-reference 보정 + 접촉 확인 hold
+    //
+    // PBIC 은 MotionGenerator 안에서 p_d 를 손보지만, DBIC 은 여기서 만든
+    // ref_task 를 ControlGeneratorDBIC 이 그대로 쓴다. 그래서 보정도 여기서 건다.
+    // 게인은 PBIC 과 같은 yaml 값(fz_*)을 쓴다.
+    //
+    //   draw_mode == true  : |Fz| 를 fz_target_ 에 맞추도록 z 를 계속 조정
+    //   draw_mode == false : 물러나는 방향(dz 증가)만 허용
+    // ------------------------------------------------------------------
+    {
+        static int dbic_fz_motion_id = -1;
+        static float dbic_fz_offset = 0.0f;      // dz [mm]
+        static float dbic_fz_integ = 0.0f;
+        static float dbic_fz_filt = 0.0f;
+        static bool  dbic_fz_filt_init = false;
+
+        if (dbic_fz_motion_id != operator_call_count_) {
+            dbic_fz_motion_id = operator_call_count_;
+            dbic_fz_offset = 0.0f;
+            dbic_fz_integ = 0.0f;
+            dbic_fz_filt = 0.0f;
+            dbic_fz_filt_init = false;
+        }
+
+        const float fz_mag = std::fabs(F.Fext[2]);
+
+        if (!dbic_fz_filt_init) {
+            dbic_fz_filt = fz_mag;
+            dbic_fz_filt_init = true;
+        } else {
+            const float a =
+                1.0f - std::exp(-2.0f * static_cast<float>(M_PI) *
+                                fz_adapt_cutoff_hz_ * static_cast<float>(dt_sec));
+            dbic_fz_filt += a * (fz_mag - dbic_fz_filt);
+        }
+
+        const float fz_error = dbic_fz_filt - fz_target_;
+
+        if (fz_adapt_enable_) {
+            dbic_fz_integ += fz_error * static_cast<float>(dt_sec);
+
+            float dz_cmd = fz_kp_ * fz_error + fz_ki_ * dbic_fz_integ;
+
+            // 위치정렬 구간에서는 물러나는 방향만 통과시킨다
+            if (!ref_task.draw_mode && dz_cmd < dbic_fz_offset) {
+                dz_cmd = dbic_fz_offset;
+            }
+
+            const float step_max =
+                fz_adapt_rate_ * static_cast<float>(dt_sec);
+
+            if (dz_cmd > dbic_fz_offset + step_max) {
+                dz_cmd = dbic_fz_offset + step_max;
+            } else if (dz_cmd < dbic_fz_offset - step_max) {
+                dz_cmd = dbic_fz_offset - step_max;
+            }
+
+            // anti-windup
+            if (fz_ki_ > 1.0e-6f) {
+                dbic_fz_integ = (dz_cmd - fz_kp_ * fz_error) / fz_ki_;
+            }
+
+            dbic_fz_offset = dz_cmd;
+        }
+
+        // ref_task.p_d 는 [m], dz 는 [mm]
+        ref_task.p_d(2) += dbic_fz_offset * 1e-3f;
+
+        // 접촉 확인 hold: 접촉이 잡힐 때까지 궤적 시계를 멈춘다
+        if (ref_task.contact_hold) {
+            if (fz_mag >= static_cast<float>(kContactForceN)) {
+                g_contact_ok_sec += dt_sec;
+            } else {
+                g_contact_ok_sec = 0.0;
+            }
+
+            if (g_contact_ok_sec < kContactHoldSec &&
+                g_contact_wait_sec < kContactWaitMaxSec) {
+
+                g_pbic_goal_pause_sec += dt_sec;
+                g_contact_wait_sec += dt_sec;
+            } else if (g_contact_ok_sec >= kContactHoldSec) {
+                if (ref_task.segment_remaining_sec > 0.0) {
+                    ROS_INFO("[DBIC CONTACT] 접촉 확인 (|Fz|=%.2f N). "
+                             "남은 hold %.2fs 를 건너뜁니다.",
+                             fz_mag, ref_task.segment_remaining_sec);
+
+                    g_pbic_goal_pause_sec -= ref_task.segment_remaining_sec;
+                }
+                g_contact_ok_sec = 0.0;
+                g_contact_wait_sec = 0.0;
+            } else if (g_contact_wait_sec >= kContactWaitMaxSec) {
+                static int dbic_contact_warn = 0;
+                if ((dbic_contact_warn++ % 200) == 0) {
+                    ROS_WARN("[DBIC CONTACT] %.1fs 안에 접촉을 확인하지 못해 "
+                             "그대로 진행합니다. |Fz|=%.2f N",
+                             kContactWaitMaxSec, fz_mag);
+                }
+            }
+        } else {
+            g_contact_ok_sec = 0.0;
+            g_contact_wait_sec = 0.0;
+        }
+    }
 
     // logging용 trajectory 갱신
     trajectory.pos_d[0] = ref_task.p_d(0) * 1000.0f;
