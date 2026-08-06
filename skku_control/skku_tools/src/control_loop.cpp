@@ -4025,6 +4025,18 @@ TaskRef TrajectoryGen::sampleDBICGoal(double t_sec, double dt_sec) const {
     auto clamp01 = [](double x) {
         return std::max(0.0, std::min(1.0, x));
     };
+
+    // 260806 단일 목표점은 "그 위치로 이동"이지 그리기가 아니다.
+    //
+    // TaskRef::draw_mode 의 기본값이 true 라서, 여기서 세팅하지 않으면 점 하나를
+    // 보낼 때마다 DRAW 로 동작해 Fz 보정이 |Fz| 를 fz_target 에 맞추려고 명령한
+    // z 를 지나쳐 계속 내려갔다. 이 경로는 waypoint 경로와 달리 클라이언트가
+    // 보낸 구간 모드(velocity.linear.z)를 읽지 않으므로 여기서 정해 준다.
+    //
+    // TRAVEL 이면 Fz 보정이 후퇴 방향으로만 열려 있어, 자유공간에서는 명령한
+    // 위치로 그대로 가고 뭔가에 닿으면 물러난다.
+    TaskRef ref_single;
+    ref_single.draw_mode = false;
 //new0723
     // auto samplePoseOnly = [&](double ts, Eigen::Vector3f& p, Eigen::Quaternionf& q) {
     //     double tau = clamp01(ts / dbic_T_);
@@ -4047,8 +4059,7 @@ TaskRef TrajectoryGen::sampleDBICGoal(double t_sec, double dt_sec) const {
         q.normalize();
     };
 
-    TaskRef ref;
-
+    TaskRef ref = ref_single;
     Eigen::Vector3f p_m, p_0, p_p;
     Eigen::Quaternionf q_m, q_0, q_p;
 
