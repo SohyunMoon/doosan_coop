@@ -5706,7 +5706,7 @@ void ImpedanceControlLoop::runDBICGoal(const moveit_msgs::CartesianTrajectory& m
     while (true) {
         robot_state = Drfl_.read_data_rt();
 
-        bool motion_ok  = spinMotionDBIC(control_loop_time, ref_tcp, ref_task);
+        bool motion_ok  = spinMotionDBIC(robot_state, control_loop_time, ref_tcp, ref_task);
         bool control_ok = spinControlDBIC(robot_state, control_loop_time, control_command, ref_task);
 
         if (exitLoop || g_nKill_dsr_control) {
@@ -5937,7 +5937,7 @@ void ImpedanceControlLoop::runDBICPath(const moveit_msgs::CartesianTrajectory& m
     while (true) {
         robot_state = Drfl_.read_data_rt();
 
-        if (!spinMotionDBIC(control_loop_time, ref_tcp, ref_task) ||
+        if (!spinMotionDBIC(robot_state, control_loop_time, ref_tcp, ref_task) ||
             !spinControlDBIC(robot_state, control_loop_time, control_command, ref_task)) {
             break;
         }
@@ -6479,7 +6479,8 @@ TaskRef ControlLoop::convertRefToTaskPoint(const TaskRef& tcp_ref) const {
     return out;
 }
 
-bool ControlLoop::spinMotionDBIC(SKKU::Duration time_step,
+bool ControlLoop::spinMotionDBIC(const LPRT_OUTPUT_DATA_LIST& robot_state,
+                                 SKKU::Duration time_step,
                                  TaskRef& ref_tcp,
                                  TaskRef& ref_task) {
     (void)time_step;
@@ -6543,7 +6544,36 @@ bool ControlLoop::spinMotionDBIC(SKKU::Duration time_step,
 
         const float fz_error = dbic_fz_filt - fz_target_;
 
-        if (fz_adapt_enable_) {
+        // ------------------------------------------------------------------
+        // stall 검사 (PBIC 의 fz_stall_limit_ 과 같은 목적)
+        //
+        // 로봇이 명령을 실행하지 못하는 상태(보호정지/서보오프)에서는 힘이
+        // 변하지 않으므로 적분기가 무한정 감긴다. 260806/1219 에서 로봇이
+        // z=305mm 에 멈춰 있는 동안 명령 z 가 843mm 까지, 538mm 앞서 나갔다.
+        // 그 상태로 정지가 풀리면 로봇이 그만큼 튄다.
+        //
+        // PBIC 은 임피던스 모델 위치(imp.p_m)와 실제를 비교하지만 DBIC 에는
+        // 그 모델이 없으므로, 명령 reference 와 실제 TCP 의 괴리로 판정한다.
+        // ------------------------------------------------------------------
+        const TaskState dbic_state =
+            getTaskState(robot_state, task_point_mode_, T_flange_tcp_);
+
+        const float fz_model_gap =
+            std::fabs((ref_task.p_d(2) - dbic_state.p(2)) * 1000.0f);
+
+        const bool fz_stalled =
+            (fz_stall_limit_ > 0.0f) && (fz_model_gap > fz_stall_limit_);
+
+        if (fz_stalled) {
+            static int dbic_stall_warn = 0;
+            if ((dbic_stall_warn++ % 200) == 0) {
+                ROS_WARN("[DBIC Fz-adapt] STALLED: ref_z - actual_z = %.1f mm > %.1f mm. "
+                         "로봇이 명령을 따라오지 못하고 있어 적응을 동결합니다.",
+                         fz_model_gap, fz_stall_limit_);
+            }
+        }
+
+        if (fz_adapt_enable_ && !fz_stalled) {
             dbic_fz_integ += fz_error * static_cast<float>(dt_sec);
 
             float dz_cmd = fz_kp_ * fz_error + fz_ki_ * dbic_fz_integ;

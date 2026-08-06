@@ -12,8 +12,8 @@ imp_k: 5.0
 # ## drawing
 imp_k_scale:        [8.0, 8.0, 8.0, 8.0, 8.0, 10.0]
 imp_m_scale:        [1.0, 1.0, 1.0, 1.0, 1.0,  1.0]
-imp_damping_ratio:  [8.0, 8.0, 8.0, 8.0, 8.0,  8.0]
-
+# imp_damping_ratio:  [8.0, 8.0, 8.0, 8.0, 8.0,  8.0]
+imp_damping_ratio:  [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 
 # 0804 Fz adaptive z-reference shaping (PBIC quaternion 모드 전용)
 #   들어온 z reference가 무엇이든 |Fz|를 fz_target에 유지하는 것만 목표.

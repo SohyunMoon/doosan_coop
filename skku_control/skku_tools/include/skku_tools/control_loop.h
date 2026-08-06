@@ -470,7 +470,8 @@ class ControlLoop : protected PBIC{
         bool spinControl(const LPRT_OUTPUT_DATA_LIST& robot_state, SKKU::Duration time_step, Torques& control_command, Desired& desired, int sol_space);
 
         // ---------------- DBIC 전용 ----------------
-        bool spinMotionDBIC(SKKU::Duration time_step,
+        bool spinMotionDBIC(const LPRT_OUTPUT_DATA_LIST& robot_state,
+                            SKKU::Duration time_step,
                             TaskRef& ref_tcp,
                             TaskRef& ref_task);
 
