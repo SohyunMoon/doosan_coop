@@ -226,7 +226,7 @@ namespace SKKU {
     //
     // MLP1 을 고른 이유: 전체 평균은 MLP2 가 근소하게 낫지만(33.2% vs 34.1%),
     // 접촉 제어에서 가장 중요한 Fz 는 MLP1 이 16.8% 낫다.
-    constexpr ImpedanceForceSource IMPEDANCE_FORCE_SOURCE = ImpedanceForceSource::MLP1;
+    constexpr ImpedanceForceSource IMPEDANCE_FORCE_SOURCE = ImpedanceForceSource::SENSOR;
 
     // ==================================================================================
     // IK 목표를 어디서 가져올지 고르는 스위치. 여기 한 곳에서만 바꾼다.

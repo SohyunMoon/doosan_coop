@@ -6012,7 +6012,8 @@ void ImpedanceControlLoop::operator()(const moveit_msgs::CartesianTrajectory& ms
     }
 }
 
-void ImpedanceControlLoop::operator_path(const moveit_msgs::CartesianTrajectory& msg) {
+//0813
+/*void ImpedanceControlLoop::operator_path(const moveit_msgs::CartesianTrajectory& msg) {
     if (runGainMoveIfEnabled()) {
         return;
     }
@@ -6026,7 +6027,48 @@ void ImpedanceControlLoop::operator_path(const moveit_msgs::CartesianTrajectory&
             runPBICPath(msg);
             break;
     }
+}*/
+
+
+//0813
+void ImpedanceControlLoop::operator_path(
+    const moveit_msgs::CartesianTrajectory& msg)
+{
+    // =====================================================
+    // 1. 먼저 기존 경로 실행
+    //    이때 기존 dataSaving()이 task_position.txt 저장
+    // =====================================================
+
+    switch (impedance_impl_mode_) {
+
+        case ImpedanceImplMode::kDBIC:
+            runDBICPath(msg);
+            break;
+
+        case ImpedanceImplMode::kPBIC_TDC:
+        default:
+            runPBICPath(msg);
+            break;
+    }
+
+
+    // =====================================================
+    // 2. 기존 경로가 완전히 끝난 다음
+    //    저장된 task_position.txt를 이용하여 원 생성
+    // =====================================================
+
+    if (gain_move_enabled_) {
+
+        ROS_WARN(
+            "Original path finished. "
+            "Starting GainMove using saved task positions.");
+
+        GainMove();
+    }
 }
+
+
+
 
 bool ImpedanceControlLoop::runGainMoveIfEnabled() {
     if (!gain_move_enabled_) {
@@ -6642,25 +6684,24 @@ void ControlLoop::gaindataSavingThread() {
         // MotionGenerator(trajectory, robot_state, prev, imp, sol_space,
         //         correction_flag, operator_call_count_,
         //         task_point_mode_, T_flange_tcp_);
-        MotionGenerator(trajectory,
-                        robot_state,
-                        prev,
-                        imp,
-                        sol_space,
-                        correction_flag,
-                        operator_call_count_,
-                        task_point_mode_,
-                        T_flange_tcp_);        
+        if (!gain_move_enabled_) {
+            MotionGenerator(trajectory,
+                            robot_state,
+                            prev,
+                            imp,
+                            sol_space,
+                            correction_flag,
+                            operator_call_count_,
+                            task_point_mode_,
+                            T_flange_tcp_);
+        }    
             //
         memcpy(gravity_torque, robot_state->gravity_torque, NUMBER_OF_JOINT * sizeof(float));
         memcpy(actual_position2, robot_state->actual_flange_position, NUMBER_OF_JOINT * sizeof(float));
         memcpy(raw_torque, robot_state->raw_joint_torque, NUMBER_OF_JOINT * sizeof(float));
         memcpy(external_torque, robot_state->external_joint_torque, NUMBER_OF_JOINT * sizeof(float));
         memcpy(actual_positionj, robot_state->actual_joint_position, NUMBER_OF_JOINT * sizeof(float));
-        LPROBOT_POSE res = Drfl_.fkin(actual_positionj, COORDINATE_SYSTEM_WORLD);
-        for(int i=0; i<6; i++){
-            actual_position[i] = res->_fPosition[i];
-        }
+        memcpy(actual_position, robot_state->actual_tcp_position,NUMBER_OF_JOINT * sizeof(float));
         
         convertToArray(trajectory.pos_d, traj_position);
 
@@ -6704,13 +6745,14 @@ void ControlLoop::gaindataSavingThread() {
             sensor_FT[i] = aft_wrench[i];
             sensor_FT_matched[i] = aft_wrench_matched[i];
         }
-        time[0] += dt;
+        time[0] = std::chrono::duration<float>(
+                      std::chrono::high_resolution_clock::now() - start).count();
         //
 
         logData("time.txt",time,1);
         logData("task_position.txt", actual_position, NUMBER_OF_JOINT);
         logData("task_trajectory.txt", traj_position_6d, NUMBER_OF_JOINT); 
-    
+        logData("actual_flange_position.txt", actual_position2, NUMBER_OF_JOINT);
         logData("joint_position.txt", actual_positionj, NUMBER_OF_JOINT);
         logData("joint_command.txt", position_command, NUMBER_OF_JOINT);
         logData("raw_torque.txt", raw_torque, NUMBER_OF_JOINT);
@@ -7408,7 +7450,123 @@ void ControlLoop::convertToArray(const std::array<float, 7>& stdArray, float flo
     std::copy(stdArray.begin(), stdArray.end(), floatArray);
 }
 
-void ControlLoop::GainMove() {
+
+//260814
+bool ControlLoop::fitSphereFrom4Points(const float pts[4][3],
+                                       float center_out[3],
+                                       float& radius_out)
+{
+    // A * u = b,  A행 = [2x, 2y, 2z, 1],  b = x^2+y^2+z^2,  u = [cx, cy, cz, d]
+    double A[4][5];
+    for (int i = 0; i < 4; ++i) {
+        const double x = pts[i][0], y = pts[i][1], z = pts[i][2];
+        A[i][0] = 2.0*x;  A[i][1] = 2.0*y;  A[i][2] = 2.0*z;  A[i][3] = 1.0;
+        A[i][4] = x*x + y*y + z*z;
+    }
+
+    // 부분 피벗 가우스 소거
+    for (int c = 0; c < 4; ++c) {
+        int piv = c;
+        for (int r = c + 1; r < 4; ++r)
+            if (std::fabs(A[r][c]) > std::fabs(A[piv][c])) piv = r;
+
+        if (std::fabs(A[piv][c]) < 1e-9) {
+            ROS_ERROR("fitSphereFrom4Points: 4 points are degenerate "
+                      "(coplanar or duplicated). Cannot define a sphere.");
+            return false;
+        }
+        if (piv != c) for (int k = 0; k < 5; ++k) std::swap(A[c][k], A[piv][k]);
+
+        for (int r = 0; r < 4; ++r) {
+            if (r == c) continue;
+            const double f = A[r][c] / A[c][c];
+            for (int k = c; k < 5; ++k) A[r][k] -= f * A[c][k];
+        }
+    }
+
+    double u[4];
+    for (int i = 0; i < 4; ++i) u[i] = A[i][4] / A[i][i];
+
+    const double r2 = u[3] + u[0]*u[0] + u[1]*u[1] + u[2]*u[2];
+    if (r2 <= 1.0) {
+        ROS_ERROR("fitSphereFrom4Points: invalid radius^2 = %.3f", r2);
+        return false;
+    }
+
+    center_out[0] = static_cast<float>(u[0]);
+    center_out[1] = static_cast<float>(u[1]);
+    center_out[2] = static_cast<float>(u[2]);
+    radius_out    = static_cast<float>(std::sqrt(r2));
+    return true;
+}
+//260814
+void ControlLoop::minJerkEdgeSpeedL(const float p1[NUM_TASK], float T)
+{
+    const float st = static_cast<float>(loop_time_) / 1000.0f;
+    const int   N  = std::max(1, static_cast<int>(T / st));
+
+    const float kHoldSec    = 1.0f;
+    const int   kHoldCycles = static_cast<int>(kHoldSec * 1000.0f / st / 1000.0f);
+
+    const auto period = std::chrono::microseconds(
+        static_cast<int64_t>(loop_time_) * 1000);
+    auto next = std::chrono::steady_clock::now();
+
+    float zero[NUM_TASK] = {0.0f,};
+
+    // 출발점은 "지금 실제 위치". 이래야 간선마다 오차가 리셋된다.
+    LPRT_OUTPUT_DATA_LIST rs = Drfl_.read_data_rt();
+    float d[3];
+    for (int i = 0; i < 3; ++i) d[i] = p1[i] - rs->actual_tcp_position[i];
+
+    for (int k = 1; k <= N + kHoldCycles; ++k) {
+        next += period;
+
+        rs = Drfl_.read_data_rt();
+
+        // RT 스트림의 robot_state 필드는 이 장비에서 0(INITIALIZING)에 고정되어
+        // 쓸 수 없다. DRFL 이 콜백으로 갱신하는 get_robot_state() 를 쓴다.
+        // TCP/IP 쪽 캐시 읽기라 10주기(40ms)마다만 확인해도 충분히 빠르다.
+        if (k % 10 == 0) {
+            const ROBOT_STATE rstate = Drfl_.get_robot_state();
+            if (rstate == STATE_SAFE_OFF       || rstate == STATE_SAFE_STOP ||
+                rstate == STATE_EMERGENCY_STOP ||
+                rstate == STATE_SAFE_STOP2     || rstate == STATE_SAFE_OFF2) {
+                Drfl_.speedl_rt(zero, zero, st);
+                ROS_ERROR("GainMove aborted: robot_state=%d "
+                          "(3=SAFE_OFF, 5=SAFE_STOP, 6=E-STOP, 9/10=SAFE_*2)",
+                          static_cast<int>(rstate));
+                exitLoop = true;
+                return;
+            }
+        }
+        if (exitLoop || g_nKill_dsr_control) {
+            Drfl_.speedl_rt(zero, zero, st);
+            return;
+        }
+
+        float vel[NUM_TASK] = {0.0f,}, acc[NUM_TASK] = {0.0f,};
+
+        if (k <= N) {                       // 종모양 구간
+            const float tau = static_cast<float>(k) / N;
+            const float t2 = tau*tau, t3 = t2*tau, t4 = t3*tau;
+            const float ds  = ( 30.0f*t2 -  60.0f*t3 +  30.0f*t4) / T;
+            const float dds = ( 60.0f*tau - 180.0f*t2 + 120.0f*t3) / (T*T);
+            for (int i = 0; i < 3; ++i) {
+                vel[i] = d[i] * ds;
+                acc[i] = d[i] * dds;
+            }
+        }
+        // k > N 이면 vel = 0 유지 -> 홀드
+
+        Drfl_.speedl_rt(vel, acc, st);
+        std::this_thread::sleep_until(next);
+    }
+}
+
+
+//0813
+/*void ControlLoop::GainMove() {
     // General settings
     float step = 10;
     float tTime = 5;
@@ -7529,7 +7687,267 @@ void ControlLoop::GainMove() {
 
     gaincheckloop.store(true, std::memory_order_release);
     return;
+}*/
+
+
+//260814 sphere scan
+void ControlLoop::GainMove() {
+
+    // =========================================================
+    // 1. 구를 정의하는 4점  ★★ 나중에 여기만 실측값으로 교체 ★★
+    //    한 평면 위에 있으면 안 됩니다(구가 유일하게 결정 안 됨).
+    //    아래는 center(615, -22, 400), R=218 인 임의의 placeholder.
+    // =========================================================
+    // const float kSpherePts[4][3] = {
+    //     { 833.0f,  -22.0f, 400.0f },   // +X
+    //     { 397.0f,  -22.0f, 400.0f },   // -X
+    //     { 615.0f,  196.0f, 400.0f },   // +Y
+    //     { 615.0f,  -22.0f, 618.0f }    // +Z  (앞 3점 평면 밖)
+    // };
+    const float kSpherePts[4][3] = {
+        {    646.325f,    736.654f,    351.858f },
+        {    646.325f,    488.402f,    103.605f },
+        {    398.072f,    736.654f,    103.605f },
+        {    398.072f,    488.402f,    351.858f }
+    };
+
+    float center[3] = {0.0f,};
+    float radius    = 0.0f;
+    if (!fitSphereFrom4Points(kSpherePts, center, radius)) {
+        gaincheckloop.store(true, std::memory_order_release);
+        return;
+    }
+
+    ROS_WARN("Sphere: center(%.1f, %.1f, %.1f), R = %.1f mm",
+             center[0], center[1], center[2], radius);
+
+    // =========================================================
+    // 2. TCP 자세 (고정). 회전축을 움직이지 않으므로 각속도는 항상 0.
+    // =========================================================
+    const float rx = 81.37f, ry = 177.89f, rz = 87.34f;
+
+    // =========================================================
+    // 3. Fibonacci sphere 로 waypoint N개 균등 배치
+    //    zFrac 범위를 좁히면 구면 캡이 되어 도달 불가 영역을 뺄 수 있다.
+    //    (-1.0, 1.0) = 완전한 구.  로봇 뒤/아래가 안 닿으면 여기를 조인다.
+    // =========================================================
+    const int   N      = std::max(2, num_waypoints_);
+    const float kZMin  = -0.9f;
+    const float kZMax  =  0.351f;
+    const float golden = static_cast<float>(M_PI) * (3.0f - std::sqrt(5.0f));
+
+    std::vector<std::array<float, NUM_TASK>> wp(N);
+    for (int k = 0; k < N; ++k) {
+        const float f  = (static_cast<float>(k) + 0.5f) / static_cast<float>(N);
+        const float zk = kZMax - (kZMax - kZMin) * f;
+        const float rk = std::sqrt(std::max(0.0f, 1.0f - zk*zk));
+        const float ph = golden * static_cast<float>(k);
+
+        wp[k][0] = center[0] + radius * rk * std::cos(ph);
+        wp[k][1] = center[1] + radius * rk * std::sin(ph);
+        wp[k][2] = center[2] + radius * zk;
+        wp[k][3] = rx;  wp[k][4] = ry;  wp[k][5] = rz;
+    }
+
+    // =========================================================
+    // 4. 모든 쌍을 한 번씩 = K_N 오일러 경로 (Hierholzer)
+    //    N 짝수면 모든 차수가 홀수 -> (N-2)/2 개 간선을 중복시켜
+    //    홀수 정점을 0,1 두 개만 남긴다.
+    // =========================================================
+    std::vector<std::vector<int>> cnt(N, std::vector<int>(N, 1));
+    for (int i = 0; i < N; ++i) cnt[i][i] = 0;
+
+    int dup = 0;
+    if (N % 2 == 0) {
+        for (int i = 2; i + 1 < N; i += 2) {
+            cnt[i][i+1] += 1;
+            cnt[i+1][i] += 1;
+            ++dup;
+        }
+    }
+
+    std::vector<int> stk, tour;
+    stk.push_back(0);
+    while (!stk.empty()) {
+        const int v = stk.back();
+        int u = -1;
+        for (int w = 0; w < N; ++w) if (cnt[v][w] > 0) { u = w; break; }
+
+        if (u < 0) { tour.push_back(v); stk.pop_back(); }
+        else       { cnt[v][u]--; cnt[u][v]--; stk.push_back(u); }
+    }
+    std::reverse(tour.begin(), tour.end());
+
+    const int total_edges = static_cast<int>(tour.size()) - 1;
+    ROS_WARN("Waypoints=%d, unique edges=%d, duplicated=%d, total traversals=%d",
+             N, N*(N-1)/2, dup, total_edges);
+
+    if (gain_start_height_ < 1 || gain_start_height_ > total_edges) {
+        ROS_ERROR("Invalid resume index %d. Valid range 1..%d.",
+                  gain_start_height_, total_edges);
+        gaincheckloop.store(true, std::memory_order_release);
+        return;
+    }
+    ROS_WARN("GainMove resumes from edge %d of %d", gain_start_height_, total_edges);
+
+    // =========================================================
+    // 5. 시작점으로 접근
+    //    RT 스트림은 끄지 않는다. 로깅 스레드가 read_data_rt() 로 물려 있고,
+    //    RT 채널은 TCP/IP api(movejx)와 독립이므로 켜둔 채로 접근해도 된다.
+    // =========================================================
+
+    float start_pos[NUM_TASK];
+    std::copy(wp[tour[gain_start_height_ - 1]].begin(),
+              wp[tour[gain_start_height_ - 1]].end(), start_pos);
+
+    // 접근은 joint space 로. 직선은 포기하고 특이점 안전을 택한다.
+    const unsigned char sol = Drfl_.get_current_solution_space();
+    const float kApproachVel = 4.0f;   // [deg/s]  ← movel 과 달리 스칼라
+    const float kApproachAcc = 8.0f;   // [deg/s^2]
+
+    ROS_WARN("Approaching first waypoint (%.1f, %.1f, %.1f), sol=%u",
+             start_pos[0], start_pos[1], start_pos[2], sol);
+
+    if (!Drfl_.movejx(start_pos, sol, kApproachVel, kApproachAcc)) {
+        ROS_ERROR("movejx to first waypoint failed "
+                  "(unreachable in solution space %u?).", sol);
+        gaincheckloop.store(true, std::memory_order_release);
+        return;
+    }
+    Drfl_.mwait();
+
+    // =========================================================
+    // 6. RT 확인 (2단계 전용). 1단계 movel 은 RT 를 쓰지 않는다.
+    // =========================================================
+    if (use_minjerk_) {
+        Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE);
+        Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
+        Drfl_.set_auto_servo_off(false, 0.0f);   // GainMove 중 idle servo off 방지
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+        Drfl_.start_rt_control();
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        const double ts0 = Drfl_.read_data_rt()->time_stamp;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        const double ts1 = Drfl_.read_data_rt()->time_stamp;
+
+        if (!(ts1 > ts0)) {
+            ROS_ERROR("RT stream is not alive (time_stamp frozen at %.3f).", ts0);
+            gaincheckloop.store(true, std::memory_order_release);
+            return;
+        }
+        ROS_WARN("RT stream alive. dt = %.4f s over 50 ms", ts1 - ts0);
+
+        Drfl_.set_singularity_handling(SINGULARITY_AVOIDANCE_AVOID);
+    }
+
+    // =========================================================
+    // 7. tour 주행.  ★ 이 루프 안에서 cout 금지 (0.1s timeout) ★
+    // =========================================================
+
+    // 평균 간선 길이. v_peak_ 는 "이 길이의 간선에서의 최대속도" 를 뜻하게 된다.
+    float d_ref = 0.0f;
+    for (int e = 1; e <= total_edges; ++e) {
+        const float* a = wp[tour[e-1]].data();
+        const float* b = wp[tour[e  ]].data();
+        float dd = 0.0f;
+        for (int i = 0; i < 3; ++i) dd += (b[i]-a[i]) * (b[i]-a[i]);
+        d_ref += std::sqrt(dd);
+    }
+    d_ref = std::max(1.0f, d_ref / static_cast<float>(total_edges));
+
+    const float T_ref = 1.875f * d_ref / v_peak_;
+    // 진행률 표시용: 남은 전체 예상 소요시간 (간선당 홀드 2초 포함)
+    float total_time_est = 0.0f;
+    for (int e = gain_start_height_; e <= total_edges; ++e) {
+        const float* a = wp[tour[e-1]].data();
+        const float* b = wp[tour[e  ]].data();
+        float dd = 0.0f;
+        for (int i = 0; i < 3; ++i) dd += (b[i]-a[i]) * (b[i]-a[i]);
+        const float DD = std::sqrt(dd);
+        total_time_est += std::max(t_min_, T_ref * std::pow(DD / d_ref, t_alpha_)) + 2.0f;
+    }
+    const auto gain_t0 = std::chrono::steady_clock::now();
+    // alpha=0.5 면 a_peak 이 전 구간 일정: 1.642 * v_peak^2 / d_ref
+    const float a_peak_est = 1.642f * v_peak_ * v_peak_ / d_ref;
+    if (use_minjerk_) {
+        Drfl_.set_velx_rt(v_peak_ * 1.5f);
+        Drfl_.set_accx_rt(a_peak_est * 3.0f);
+    }
+
+    ROS_WARN("d_ref=%.1f mm, T_ref=%.2f s, alpha=%.2f, a_peak~%.0f mm/s^2 | mode=%s",
+             d_ref, T_ref, t_alpha_, a_peak_est,
+             use_minjerk_ ? "min-jerk" : "movel(stage1)");
+
+    float tvel[2] = {50.0f, 50.0f};      // 1단계 movel 전용
+    float tacc[2] = {100.0f, 100.0f};
+
+    for (int e = gain_start_height_; e <= total_edges; ++e) {
+
+        const float* a = wp[tour[e-1]].data();
+        const float* b = wp[tour[e  ]].data();
+
+        float D = 0.0f;
+        for (int i = 0; i < 3; ++i) D += (b[i]-a[i]) * (b[i]-a[i]);
+        D = std::sqrt(D);
+        const float T_edge = std::max(t_min_, T_ref * std::pow(D / d_ref, t_alpha_));
+        const float elapsed = std::chrono::duration<float>(
+                                  std::chrono::steady_clock::now() - gain_t0).count();
+        const int done = e - gain_start_height_;
+        const int todo = total_edges - gain_start_height_ + 1;
+
+        ROS_WARN("[GainMove] %d/%d (%.0f%%)  wp %d->%d  D=%.0fmm  T=%.1fs  |  elapsed %.0fs / est %.0fs",
+                 e, total_edges, 100.0f * done / todo,
+                 tour[e-1], tour[e], D, T_edge,
+                 elapsed, total_time_est);
+        if (use_minjerk_) {
+            // 2단계: 거리에 따라 소요시간을 늘린다. T ∝ D^alpha (T_edge 는 위에서 계산됨)
+            minJerkEdgeSpeedL(b, T_edge);
+        } else {
+            // 1단계: 옛날 GainMove 와 같은 구조. 블로킹 movel
+            float target[NUM_TASK];
+            std::copy(b, b + NUM_TASK, target);
+
+            ROS_WARN("edge %d/%d  D=%.1f mm  -> (%.1f, %.1f, %.1f)",
+                     e, total_edges, D, target[0], target[1], target[2]);
+
+            if (!Drfl_.movel(target, tvel, tacc)) {
+                ROS_ERROR("movel failed at edge %d/%d.", e, total_edges);
+                break;
+            }
+            Drfl_.mwait();
+        }
+
+        if (exitLoop || g_nKill_dsr_control) {
+            ROS_WARN("GainMove aborted at edge %d / %d.", e, total_edges);
+            break;
+        }
+    }
+
+    // =========================================================
+    // 8. 종료: 속도 0으로 수렴시키고 정지.
+    //    RT는 켜둔 채로 끝낸다.  rt_control_needs_restart_ 가 false 인 상태와
+    //    실제 RT 상태를 일치시키기 위함. (여기서 stop_rt_control() 하면
+    //    이후 PBIC 가 재시작을 건너뛰고 torque_rt 가 조용히 실패한다)
+    // =========================================================
+    if (use_minjerk_) {
+        const float st = static_cast<float>(loop_time_) / 1000.0f;
+        float zero[NUM_TASK] = {0.0f,};
+        for (int i = 0; i < 20; ++i) {          // 20주기 = 20ms 동안 0 유지
+            Drfl_.read_data_rt();
+            Drfl_.speedl_rt(zero, zero, st);
+        }
+        Drfl_.stop(STOP_TYPE_SLOW);
+    }
+
+    ROS_WARN("GainMove (sphere scan) finished.");
+    gaincheckloop.store(true, std::memory_order_release);
+    return;
 }
+
+
+
 
 void ControlLoop::returnToHome() {
     Drfl_.movej(home_abs, 60, 30);

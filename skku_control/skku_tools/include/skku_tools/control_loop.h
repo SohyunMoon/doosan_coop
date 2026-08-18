@@ -446,6 +446,15 @@ class ControlLoop : protected PBIC{
         void gaindataSavingThread();
         void returnToHome();
         void init(); 
+//260814 sphere scan
+        // 4점으로 구(중심+반지름) 최소자승 fit
+        bool fitSphereFrom4Points(const float pts[4][3],
+                                  float center_out[3],
+                                  float& radius_out);
+
+        // 한 간선을 minimum-jerk 속도 프로파일로 speedl_rt 주행
+        void minJerkEdgeSpeedL(const float p1[NUM_TASK], float T);
+//
         void GainMove();
         void createNewDataDirectory();
         void alignPitchOrientation(float current_joint_position[NUMBER_OF_JOINT], const moveit_msgs::CartesianTrajectory& msg);
@@ -496,9 +505,21 @@ class ControlLoop : protected PBIC{
         bool exitLoop = false;
         // true: GainMove + gain logging만 실행하고 PBIC/DBIC 시작 전에 return
         // false: GainMove를 건너뛰고 기존 impedance controller 실행
+//0814
         bool gain_move_enabled_ = false;
-        // GainMove 시작 height (1-based). step=10이면 선택 가능 범위는 1~11.
-        int gain_start_height_ = 10;
+        // 구면 waypoint 개수
+        int   num_waypoints_ = 13;//홀수
+        // min-jerk 최대속도 / 최소 구간시간
+        float v_peak_ = 80.0f;   // [mm/s]
+        float t_min_  = 0.6f;     // [s]
+        // 간선 시간 법칙 T = T_ref * (D/D_ref)^alpha
+        //   1.0 = 모든 간선이 v_peak 를 찍음 (가속도가 짧은 간선에서 급증)
+        //   0.5 = 모든 간선의 최대 가속도가 동일  ← 권장
+        float t_alpha_ = 0.5f;
+        bool use_minjerk_ = true;
+        // tour 재개 인덱스 (1-based). 1이면 처음부터.
+        int   gain_start_height_ = 1;
+//        
         std::atomic<bool> gaincheckloop{false};
         Torques control_command;
         bool truncate = false;
