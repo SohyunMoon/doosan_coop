@@ -456,6 +456,9 @@ class ControlLoop : protected PBIC{
         void minJerkEdgeSpeedL(const float p1[NUM_TASK], float T);
 //
         void GainMove();
+//0820 어드민턴스 제어
+        void AdmittanceMove(float duration_sec);     
+//
         void createNewDataDirectory();
         void alignPitchOrientation(float current_joint_position[NUMBER_OF_JOINT], const moveit_msgs::CartesianTrajectory& msg);
         void waitForMotionCompletion(float target_joint[NUMBER_OF_JOINT], float tolerance = 1); 
@@ -507,8 +510,12 @@ class ControlLoop : protected PBIC{
         // false: GainMove를 건너뛰고 기존 impedance controller 실행
 //0814
         bool gain_move_enabled_ = false;
+//0820 어드민턴스제어
+        bool  admittance_enabled_  = true;      // ← 추가. 어드미턴스 on/off
+        float admittance_duration_ = 120.0f;     // ← 추가. 지속시간 [s]
+//
         // 구면 waypoint 개수
-        int   num_waypoints_ = 13;//홀수
+        int   num_waypoints_ = 15;//홀수
         // min-jerk 최대속도 / 최소 구간시간
         float v_peak_ = 80.0f;   // [mm/s]
         float t_min_  = 0.6f;     // [s]
@@ -573,6 +580,9 @@ private:
     // When enabled through ~gain_move_enabled, run only the gain scan/logging
     // and return without starting PBIC/DBIC.
     bool runGainMoveIfEnabled();
+//0820 어드민턴스 제어
+    bool runAdmittanceIfEnabled();               
+//
 
     void runPBICGoal(const moveit_msgs::CartesianTrajectory& msg);
     void runPBICPath(const moveit_msgs::CartesianTrajectory& msg);

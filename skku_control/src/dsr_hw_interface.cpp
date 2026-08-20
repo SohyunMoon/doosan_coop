@@ -11,6 +11,7 @@
 #include <boost/assign/list_of.hpp>
 #include <boost/bind.hpp>
 #include <sstream>
+#include <atomic>
 #include <skku_tools/control_loop.h>
 #include <cctype>
 #include <tf2/LinearMath/Matrix3x3.h>
@@ -31,6 +32,9 @@ int g_nAnalogOutputModeCh1;
 int g_nAnalogOutputModeCh2;
 
 extern bool receivedTraj;
+
+// control_loop.cpp 에서 정의. GainMove 가 도는 동안 true.
+extern std::atomic<bool> g_gain_move_active;
 
 #define STABLE_BAND_JNT     0.05
 #define DSR_CTL_PUB_RATE    100  //[hz] 10ms <----- 퍼블리싱 주기, but OnMonitoringDataCB() 은 100ms 마다 불려짐을 유의!
@@ -784,13 +788,31 @@ namespace dsr_control{
 
                 if (time_since_last_trajectory >= timeout_interval.toSec())
                 {
-                    float current_pos[NUM_JOINT];
-                    LPROBOT_POSE pose = Drfl.get_current_pose(ROBOT_SPACE_JOINT);
-                    for (int i = 0; i < NUM_JOINT; ++i)
-                        current_pos[i] = pose->_fPosition[i];
+                    // GainMove 처럼 trajectory 콜백 안에서 장시간 도는 모션이
+                    // 실행 중이면 dummy movej 가 그 모션을 가로챈다.
+                    // 이 경우에는 명령을 보내지 말고 타이머만 리셋한다.
+                    const ROBOT_STATE rstate = Drfl.get_robot_state();
+                    const bool motion_in_progress =
+                        g_gain_move_active.load(std::memory_order_acquire) ||
+                        (rstate != STATE_STANDBY);
 
-                    Drfl.movej(current_pos, 60,60);
-                    ROS_WARN("[KeepAlive] dummy movej tasnmission");
+                    if (motion_in_progress)
+                    {
+                        ROS_WARN("[KeepAlive] skip dummy movej (gain_move=%d, robot_state=%s)",
+                                 static_cast<int>(g_gain_move_active.load(std::memory_order_acquire)),
+                                 GetRobotStateString(static_cast<int>(rstate)));
+                    }
+                    else
+                    {
+                        float current_pos[NUM_JOINT];
+                        LPROBOT_POSE pose = Drfl.get_current_pose(ROBOT_SPACE_JOINT);
+                        for (int i = 0; i < NUM_JOINT; ++i)
+                            current_pos[i] = pose->_fPosition[i];
+
+                        Drfl.movej(current_pos, 60,60);
+                        ROS_WARN("[KeepAlive] dummy movej tasnmission");
+                    }
+
                     last_trajectory_time_ = now;
                 }
             }
@@ -1197,6 +1219,7 @@ namespace dsr_control{
                 Drfl.set_robot_mode(ROBOT_MODE_AUTONOMOUS); 
                 Drfl.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE);
                 Drfl.change_collision_sensitivity(1);
+//예전 그리퍼 달았을때의 잔재?
                 float fCog[3] = {4.9, 3.28, 85.18};
                 float finertia[6] = { 0, 0, 0, 0, 0, 0 };
                 float fweight = 8.6;

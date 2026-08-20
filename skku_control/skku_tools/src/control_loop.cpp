@@ -2949,6 +2949,12 @@
 #include <atomic>
 #include <vector>
 extern bool g_nKill_dsr_control;
+
+// GainMove 실행 중임을 dsr_hw_interface 의 keepalive 스레드에 알린다.
+// keepalive 가 240s 무수신 판정으로 dummy movej 를 쏘면 GainMove 의 movel /
+// speedl_rt 가 가로채여 300초 부근에서 끊긴다.
+std::atomic<bool> g_gain_move_active{false};
+
 #include <skku_tools/control_loop.h>
 #include <ros/ros.h>
 #include <std_msgs/String.h>
@@ -5997,6 +6003,11 @@ void ImpedanceControlLoop::runDBICPath(const moveit_msgs::CartesianTrajectory& m
 }
 
 void ImpedanceControlLoop::operator()(const moveit_msgs::CartesianTrajectory& msg) {
+//0820 어드민턴스제어    
+    if (runAdmittanceIfEnabled()) { 
+        return;
+    }
+//
     if (runGainMoveIfEnabled()) {
         return;
     }
@@ -6067,8 +6078,35 @@ void ImpedanceControlLoop::operator_path(
     }
 }
 
+//0820 어드민턴스제어
+bool ImpedanceControlLoop::runAdmittanceIfEnabled() {
+    if (!admittance_enabled_) {
+        return false;
+    }
 
+    ROS_WARN("admittance_enabled_=true: hand-guiding mode");
 
+    createNewDataDirectory();
+    isDirectoryCreated = true;
+
+    gaincheckloop.store(false, std::memory_order_release);
+    std::thread log_thread(&ControlLoop::gaindataSavingThread, this);
+
+    try {
+        AdmittanceMove(admittance_duration_);
+    } catch (...) {
+        gaincheckloop.store(true, std::memory_order_release);
+        if (log_thread.joinable()) log_thread.join();
+        throw;
+    }
+
+    gaincheckloop.store(true, std::memory_order_release);
+    if (log_thread.joinable()) log_thread.join();
+
+    ROS_WARN("Admittance finished: returning without starting PBIC/DBIC");
+    return true;
+}
+//
 
 bool ImpedanceControlLoop::runGainMoveIfEnabled() {
     if (!gain_move_enabled_) {
@@ -6676,6 +6714,7 @@ void ControlLoop::gaindataSavingThread() {
     float time[1] = {0,};
 
     auto start = std::chrono::high_resolution_clock::now();
+    const auto t_log_start = start;
     bool correction_flag = false;
     while (!gaincheckloop.load(std::memory_order_acquire)){
         LPRT_OUTPUT_DATA_LIST robot_state = Drfl_.read_data_rt();
@@ -6684,7 +6723,7 @@ void ControlLoop::gaindataSavingThread() {
         // MotionGenerator(trajectory, robot_state, prev, imp, sol_space,
         //         correction_flag, operator_call_count_,
         //         task_point_mode_, T_flange_tcp_);
-        if (!gain_move_enabled_) {
+        if (!gain_move_enabled_ && !admittance_enabled_) {
             MotionGenerator(trajectory,
                             robot_state,
                             prev,
@@ -6746,7 +6785,7 @@ void ControlLoop::gaindataSavingThread() {
             sensor_FT_matched[i] = aft_wrench_matched[i];
         }
         time[0] = std::chrono::duration<float>(
-                      std::chrono::high_resolution_clock::now() - start).count();
+                      std::chrono::high_resolution_clock::now() - t_log_start).count();
         //
 
         logData("time.txt",time,1);
@@ -7549,9 +7588,12 @@ void ControlLoop::minJerkEdgeSpeedL(const float p1[NUM_TASK], float T)
 
         if (k <= N) {                       // 종모양 구간
             const float tau = static_cast<float>(k) / N;
-            const float t2 = tau*tau, t3 = t2*tau, t4 = t3*tau;
-            const float ds  = ( 30.0f*t2 -  60.0f*t3 +  30.0f*t4) / T;
-            const float dds = ( 60.0f*tau - 180.0f*t2 + 120.0f*t3) / (T*T);
+            // n=3 (7차, min-snap):  s' = 140 τ³(1−τ)³
+            const float t2 = tau*tau, t3 = t2*tau;
+            const float om = 1.0f - tau, om2 = om*om, om3 = om2*om;
+            const float ds  = 140.0f * t3 * om3 / T;
+            const float dds = 420.0f * t2 * om2 * (1.0f - 2.0f*tau) / (T*T);
+
             for (int i = 0; i < 3; ++i) {
                 vel[i] = d[i] * ds;
                 acc[i] = d[i] * dds;
@@ -7689,9 +7731,175 @@ void ControlLoop::minJerkEdgeSpeedL(const float p1[NUM_TASK], float T)
     return;
 }*/
 
+//0820 어드민턴스제어
+// ===========================================================================
+// 어드미턴스 핸드가이딩:  M*v_dot + B*v = F  를 v 에 대해 풀어 speedl_rt 로 명령
+//   힘 : AFT 센서 -> matchAFTWrench(R) 로 base 좌표계 변환
+//   중력(툴 무게) : 시작 시 Fbias 측정으로 제거
+//   외부 루프가 1차 저역통과(극점 -B/M)라 게인이 어떻든 발산하지 않는다.
+//   위치항 K 가 없으므로 손을 놓으면 그 자리에 선다.
+// ===========================================================================
+void ControlLoop::AdmittanceMove(float duration_sec)
+{
+    const float st = static_cast<float>(loop_time_) / 1000.0f;      // [s]
+    const auto period = std::chrono::microseconds(
+        static_cast<int64_t>(loop_time_) * 1000);
+    float zero[NUM_TASK] = {0.0f,};
+
+    // ---- RT 진입 전 AUTONOMOUS 복귀 (없으면 robot_state=0 에 걸림) ----
+    Drfl_.set_safety_mode(SAFETY_MODE_AUTONOMOUS, SAFETY_MODE_EVENT_MOVE);
+    Drfl_.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    // ---- 파라미터 (SI: N, kg, N·s/m) ----
+    const float Md[3] = {  3.0f,   3.0f,   3.0f };   // 병진 관성 [kg]
+    const float Bd[3] = {60.0f, 60.0f, 60.0f};    // 병진 감쇠 [N·s/m]
+    const float Id[3] = {  0.40f,  0.40f,  0.40f};   // 회전 관성 [kg·m^2]
+    const float Br[3] = { 10.0f,  10.0f,  10.0f };   // 회전 감쇠. 첫 실행은 크게!
+
+    const float kFdead = 1.5f;      // [N]  이하는 무시
+    const float kTdead = 0.3f;      // [Nm]
+    const float kFcut  = 6.0f;     // [Hz] 힘 LPF
+    const float kVmax  = 200.0f;    // [mm/s]
+    const float kWmax  = 60.0f;     // [deg/s]
+
+    Drfl_.set_velx_rt(kVmax * 2.0f);
+    Drfl_.set_accx_rt(2000.0f);
+
+    // 매 주기 회전행렬을 만들어 힘을 base 좌표계로 변환
+    auto readWrench = [&]() {
+        float (*rm)[3] = Drfl_.get_current_rotm();
+        Eigen::Matrix3f R;
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c) R(r, c) = rm[r][c];
+        return sensor_data.matchAFTWrench(R);
+    };
+
+    // ---- 힘 bias 측정 (툴 무게). 이 동안 로봇을 만지지 말 것 ----
+    ROS_WARN("[Admittance] measuring bias 0.8 s - DO NOT TOUCH THE ROBOT");
+    float Fbias[6] = {0.0f,};
+    {
+        auto b_next = std::chrono::steady_clock::now();
+        for (int k = 0; k < 200; ++k) {
+            b_next += period;
+            Drfl_.read_data_rt();
+            const auto ft = readWrench();
+            for (int i = 0; i < 6; ++i) Fbias[i] += ft[i] / 200.0f;
+            std::this_thread::sleep_until(b_next);
+        }
+    }
+    ROS_WARN("[Admittance] bias F=(%.2f %.2f %.2f) T=(%.2f %.2f %.2f)",
+             Fbias[0], Fbias[1], Fbias[2], Fbias[3], Fbias[4], Fbias[5]);
+
+    // ---- 상태변수 (SI) ----
+    float v[3]  = {0.0f,};      // [m/s]
+    float w[3]  = {0.0f,};      // [rad/s]
+    float Ff[6] = {0.0f,};      // LPF 통과 힘
+
+    const float aLPF =
+        1.0f - std::exp(-2.0f * static_cast<float>(M_PI) * kFcut * st);
+    const float vlim = kVmax / 1000.0f;                             // [m/s]
+    const float wlim = kWmax * static_cast<float>(M_PI) / 180.0f;   // [rad/s]
+    const int   N    = static_cast<int>(duration_sec / st);
+
+    ROS_WARN("[Admittance] start. %.0f s, Bd=%.0f Br=%.0f",
+             duration_sec, Bd[0], Br[0]);
+
+    auto next = std::chrono::steady_clock::now();
+    bool aborted = false;
+
+    for (int k = 0; k < N; ++k) {
+        next += period;
+        Drfl_.read_data_rt();
+
+        // ---- 안전 감시 (40 ms 마다) ----
+        if (k % 10 == 0) {
+            const ROBOT_STATE s = Drfl_.get_robot_state();
+            if (s == STATE_SAFE_OFF       || s == STATE_SAFE_STOP ||
+                s == STATE_EMERGENCY_STOP ||
+                s == STATE_SAFE_STOP2     || s == STATE_SAFE_OFF2) {
+                Drfl_.speedl_rt(zero, zero, st);
+                ROS_ERROR("[Admittance] aborted: robot_state=%d",
+                          static_cast<int>(s));
+                aborted = true;
+                break;
+            }
+        }
+        if (exitLoop || g_nKill_dsr_control) {
+            Drfl_.speedl_rt(zero, zero, st);
+            aborted = true;
+            break;
+        }
+
+        // ---- 힘: bias 제거 -> LPF -> 데드밴드 ----
+        const auto ft = readWrench();
+        float F[6];
+        for (int i = 0; i < 6; ++i) {
+            const float raw = ft[i];
+            Ff[i] += aLPF * (raw - Ff[i]);
+            const float dz = (i < 3) ? kFdead : kTdead;
+            F[i] = (std::fabs(Ff[i]) > dz)
+                 ? (Ff[i] - std::copysign(dz, Ff[i])) : 0.0f;
+        }
+
+        float vel[NUM_TASK] = {0.0f,}, acc[NUM_TASK] = {0.0f,};
+
+        // ---- 병진 (ZOH 정확 이산화) ----
+        for (int i = 0; i < 3; ++i) {
+            const float a   = std::exp(-Bd[i] / Md[i] * st);
+            const float vss = F[i] / Bd[i];                 // 종단속도 [m/s]
+            float vn = a * v[i] + (1.0f - a) * vss;
+
+            if (vn >  vlim) vn =  vlim;      // 상태 자체를 제한 (windup 방지)
+            if (vn < -vlim) vn = -vlim;
+
+            acc[i] = (vn - v[i]) / st * 1000.0f;            // [mm/s^2]
+            v[i]   = vn;
+            vel[i] = v[i] * 1000.0f;                        // [mm/s]
+        }
+        // ---- 회전 ----
+        for (int i = 0; i < 3; ++i) {
+            const float a   = std::exp(-Br[i] / Id[i] * st);
+            const float wss = F[i+3] / Br[i];               // [rad/s]
+            float wn = a * w[i] + (1.0f - a) * wss;
+
+            if (wn >  wlim) wn =  wlim;
+            if (wn < -wlim) wn = -wlim;
+
+            acc[i+3] = (wn - w[i]) / st * 180.0f / static_cast<float>(M_PI);
+            w[i]     = wn;
+            vel[i+3] = w[i] * 180.0f / static_cast<float>(M_PI);   // [deg/s]
+        }
+
+        Drfl_.speedl_rt(vel, acc, st);
+        std::this_thread::sleep_until(next);
+    }
+
+    // ---- 종료: 페이싱하며 0 유지 후 정지 ----
+    auto e_next = std::chrono::steady_clock::now();
+    for (int i = 0; i < 50; ++i) {
+        e_next += period;
+        Drfl_.read_data_rt();
+        Drfl_.speedl_rt(zero, zero, st);
+        std::this_thread::sleep_until(e_next);
+    }
+    Drfl_.stop(STOP_TYPE_SLOW);
+
+    ROS_WARN("[Admittance] finished%s.", aborted ? " (aborted)" : "");
+    gaincheckloop.store(true, std::memory_order_release);
+}
 
 //260814 sphere scan
 void ControlLoop::GainMove() {
+
+    // GainMove 는 trajectory_cb 안에서 동기로 돈다. 그동안 새 trajectory 가
+    // 들어오지 않으므로 keepalive 의 last_trajectory_time_ 이 갱신되지 않고,
+    // 240s 임계 + 60s 검사주기 때문에 240~300s 사이에 dummy movej 가 날아와
+    // 진행 중이던 모션을 끊는다. 이 구간 동안은 keepalive 를 눌러둔다.
+    struct GainMoveActiveGuard {
+        GainMoveActiveGuard()  { g_gain_move_active.store(true,  std::memory_order_release); }
+        ~GainMoveActiveGuard() { g_gain_move_active.store(false, std::memory_order_release); }
+    } gain_move_active_guard;
 
     // =========================================================
     // 1. 구를 정의하는 4점  ★★ 나중에 여기만 실측값으로 교체 ★★
@@ -7705,12 +7913,11 @@ void ControlLoop::GainMove() {
     //     { 615.0f,  -22.0f, 618.0f }    // +Z  (앞 3점 평면 밖)
     // };
     const float kSpherePts[4][3] = {
-        {    646.325f,    736.654f,    351.858f },
-        {    646.325f,    488.402f,    103.605f },
-        {    398.072f,    736.654f,    103.605f },
-        {    398.072f,    488.402f,    351.858f }
+        {    654.699f,    811.983f,    401.631f },
+        {    654.699f,    577.716f,    167.364f },
+        {    420.432f,    811.983f,    167.364f },
+        {    420.432f,    577.716f,    401.631f }
     };
-
     float center[3] = {0.0f,};
     float radius    = 0.0f;
     if (!fitSphereFrom4Points(kSpherePts, center, radius)) {
@@ -7724,16 +7931,15 @@ void ControlLoop::GainMove() {
     // =========================================================
     // 2. TCP 자세 (고정). 회전축을 움직이지 않으므로 각속도는 항상 0.
     // =========================================================
-    const float rx = 81.37f, ry = 177.89f, rz = 87.34f;
-
+    const float rx = 79.52f, ry = 179.14f, rz = 171.70f;
     // =========================================================
     // 3. Fibonacci sphere 로 waypoint N개 균등 배치
     //    zFrac 범위를 좁히면 구면 캡이 되어 도달 불가 영역을 뺄 수 있다.
     //    (-1.0, 1.0) = 완전한 구.  로봇 뒤/아래가 안 닿으면 여기를 조인다.
     // =========================================================
     const int   N      = std::max(2, num_waypoints_);
-    const float kZMin  = -0.9f;
-    const float kZMax  =  0.351f;
+    const float kZMin  = -1.000f;
+    const float kZMax  =  1.000f;
     const float golden = static_cast<float>(M_PI) * (3.0f - std::sqrt(5.0f));
 
     std::vector<std::array<float, NUM_TASK>> wp(N);
@@ -7857,7 +8063,7 @@ void ControlLoop::GainMove() {
     }
     d_ref = std::max(1.0f, d_ref / static_cast<float>(total_edges));
 
-    const float T_ref = 1.875f * d_ref / v_peak_;
+    const float T_ref = 2.1875f * d_ref / v_peak_;
     // 진행률 표시용: 남은 전체 예상 소요시간 (간선당 홀드 2초 포함)
     float total_time_est = 0.0f;
     for (int e = gain_start_height_; e <= total_edges; ++e) {
@@ -7870,7 +8076,7 @@ void ControlLoop::GainMove() {
     }
     const auto gain_t0 = std::chrono::steady_clock::now();
     // alpha=0.5 면 a_peak 이 전 구간 일정: 1.642 * v_peak^2 / d_ref
-    const float a_peak_est = 1.642f * v_peak_ * v_peak_ / d_ref;
+    const float a_peak_est = 1.5701f * v_peak_ * v_peak_ / d_ref;
     if (use_minjerk_) {
         Drfl_.set_velx_rt(v_peak_ * 1.5f);
         Drfl_.set_accx_rt(a_peak_est * 3.0f);
